@@ -185,9 +185,11 @@ export default function PatientDetails() {
         setTimeout(() => setCreatedSuccess(false), 3000)
         navigate(`/patient/${newPatientId}`)
       }
-    } catch (err: any) {
-      setError(err.message || 'Falha ao salvar os dados.')
+    } catch (err: unknown) {
+      const errorObj = err as { message?: string } | null
+      setError(errorObj?.message || 'Falha ao salvar os dados.')
     }
+
   }
 
   return (

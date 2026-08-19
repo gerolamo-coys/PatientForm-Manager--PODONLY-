@@ -255,10 +255,12 @@ export default function DashboardScreen(): React.JSX.Element {
         const date = new Date().toISOString()
         setLastBackupDate(date)
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err)
-      setBackupError(err.message || 'Erro ao realizar backup.')
+      const errorObj = err as { message?: string } | null
+      setBackupError(errorObj?.message || 'Erro ao realizar backup.')
     } finally {
+
       setBackupLoading(false)
     }
   }

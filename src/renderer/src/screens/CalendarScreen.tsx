@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { Calendar, dateFnsLocalizer, Views } from 'react-big-calendar'
+import { Calendar, dateFnsLocalizer, Views, View } from 'react-big-calendar'
 import withDragAndDrop from 'react-big-calendar/lib/addons/dragAndDrop'
 import { format, parse, startOfWeek, getDay } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
@@ -21,12 +21,26 @@ const localizer = dateFnsLocalizer({
   locales,
 })
 
-const DnDCalendar = withDragAndDrop(Calendar)
+interface CalendarEvent {
+  id: number
+  title: string
+  start: Date
+  end: Date
+  start_time: string
+  end_time: string
+  patient_id?: number | null
+  notes?: string | null
+  google_event_id?: string | null
+}
+
+const DnDCalendar = withDragAndDrop<CalendarEvent>(Calendar)
 
 export default function CalendarScreen(): React.JSX.Element {
-  const [events, setEvents] = useState<any[]>([])
+  const [events, setEvents] = useState<CalendarEvent[]>([])
   const [currentDate, setCurrentDate] = useState(new Date())
-  const [currentView, setCurrentView] = useState<any>(Views.WEEK)
+  const [currentView, setCurrentView] = useState<View>(Views.WEEK)
+
+
   const [patients, setPatients] = useState<PatientListItem[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isSyncing, setIsSyncing] = useState(false)
@@ -158,7 +172,7 @@ export default function CalendarScreen(): React.JSX.Element {
     setEndTime(format(calculatedEnd, 'HH:mm'))
   }
 
-  const handleSelectEvent = (event: any) => {
+  const handleSelectEvent = (event: CalendarEvent) => {
     setEditingId(event.id)
     setPatientId(event.patient_id ? String(event.patient_id) : '')
     setStartDate(format(new Date(event.start_time), 'yyyy-MM-dd'))
@@ -169,25 +183,30 @@ export default function CalendarScreen(): React.JSX.Element {
     setIsModalOpen(true)
   }
 
-  const handleEventDrop = async ({ event, start, end }: any) => {
-    const startIso = start.toISOString()
-    const endIso = end.toISOString()
+  const handleEventDrop = async ({ event, start, end }: { event: CalendarEvent; start: string | Date; end: string | Date }) => {
+    const startDate = typeof start === 'string' ? new Date(start) : start
+    const endDate = typeof end === 'string' ? new Date(end) : end
+    const startIso = startDate.toISOString()
+    const endIso = endDate.toISOString()
     
     // Optimistic UI update
-    setEvents(prev => prev.map(e => e.id === event.id ? { ...e, start, end, start_time: startIso, end_time: endIso } : e))
+    setEvents(prev => prev.map(e => e.id === event.id ? { ...e, start: startDate, end: endDate, start_time: startIso, end_time: endIso } : e))
     
     await window.api.updateAppointment(event.id, { start_time: startIso, end_time: endIso })
   }
 
-  const handleEventResize = async ({ event, start, end }: any) => {
-    const startIso = start.toISOString()
-    const endIso = end.toISOString()
+  const handleEventResize = async ({ event, start, end }: { event: CalendarEvent; start: string | Date; end: string | Date }) => {
+    const startDate = typeof start === 'string' ? new Date(start) : start
+    const endDate = typeof end === 'string' ? new Date(end) : end
+    const startIso = startDate.toISOString()
+    const endIso = endDate.toISOString()
     
     // Optimistic UI update
-    setEvents(prev => prev.map(e => e.id === event.id ? { ...e, start, end, start_time: startIso, end_time: endIso } : e))
+    setEvents(prev => prev.map(e => e.id === event.id ? { ...e, start: startDate, end: endDate, start_time: startIso, end_time: endIso } : e))
     
     await window.api.updateAppointment(event.id, { start_time: startIso, end_time: endIso })
   }
+
 
   const openModal = () => {
     setEditingId(null)
@@ -296,8 +315,9 @@ export default function CalendarScreen(): React.JSX.Element {
             view={currentView}
             onNavigate={(newDate) => setCurrentDate(newDate)}
             onView={(newView) => setCurrentView(newView)}
-            startAccessor={(event: any) => event.start}
-            endAccessor={(event: any) => event.end}
+            startAccessor={(event: CalendarEvent) => event.start}
+            endAccessor={(event: CalendarEvent) => event.end}
+
             style={{ height: '100%' }}
             culture="pt-BR"
             selectable

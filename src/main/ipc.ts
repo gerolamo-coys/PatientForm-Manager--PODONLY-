@@ -422,15 +422,16 @@ export function registerIpcHandlers() {
           resolve(filePath)
         })
 
-        output.on('error', (err: any) => {
+        output.on('error', (err: unknown) => {
           console.error('Erro de Output Stream no backup:', err)
           reject(err)
         })
 
-        archive.on('error', (err: any) => {
+        archive.on('error', (err: unknown) => {
           console.error('Erro no Archiver durante o backup:', err)
           reject(err)
         })
+
 
         archive.pipe(output)
 

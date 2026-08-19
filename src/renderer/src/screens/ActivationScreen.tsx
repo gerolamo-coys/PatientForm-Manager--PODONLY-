@@ -25,9 +25,10 @@ export default function ActivationScreen(): React.JSX.Element {
       } else {
         setError(result.error || 'A chave informada é inválida.')
       }
-    } catch (err: any) {
+    } catch {
       setError('Erro ao validar a licença. Verifique sua conexão com a internet.')
-    } finally {
+    }
+ finally {
       setLoading(false)
     }
   }

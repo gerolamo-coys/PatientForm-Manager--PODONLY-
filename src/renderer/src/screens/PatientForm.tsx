@@ -95,9 +95,11 @@ export default function PatientForm() {
             dermatological_pathologies: formData.dermatological_pathologies || '[]'
           })
         }
-      } catch (err: any) {
-        setError(err.message || 'Falha ao carregar dados da ficha.')
+      } catch (err: unknown) {
+        const errorObj = err as { message?: string } | null
+        setError(errorObj?.message || 'Falha ao carregar dados da ficha.')
       }
+
     }
     loadData()
   }, [id, formId, isEditing])
@@ -183,9 +185,11 @@ export default function PatientForm() {
       setTimeout(() => {
         navigate(`/patient/${id}`)
       }, 1500)
-    } catch (err: any) {
-      setError(err.message || 'Falha ao salvar a ficha.')
+    } catch (err: unknown) {
+      const errorObj = err as { message?: string } | null
+      setError(errorObj?.message || 'Falha ao salvar a ficha.')
     }
+
   }
 
   const scrollToSection = (sectionId: string) => {

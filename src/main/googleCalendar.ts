@@ -6,10 +6,11 @@ import type { Appointment } from '../shared/types'
 /**
  * Trata erros de autenticação do Google e limpa credenciais expiradas automaticamente
  */
-function handleGoogleAuthError(error: any): boolean {
-  const errMsg = error?.message || ''
-  const errCode = error?.code || ''
-  const status = error?.status || error?.response?.status || ''
+function handleGoogleAuthError(error: unknown): boolean {
+  const err = error as { message?: string; code?: number | string; status?: number | string; response?: { status?: number | string } } | null | undefined
+  const errMsg = err?.message || ''
+  const errCode = err?.code || ''
+  const status = err?.status || err?.response?.status || ''
 
   if (
     errMsg.includes('invalid_grant') ||
@@ -61,7 +62,7 @@ export async function updateGoogleEvent(googleEventId: string, appointment: Part
     const oauth2Client = getOAuth2Client()
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client })
 
-    const event: any = {}
+    const event: Record<string, unknown> = {}
     if (appointment.title) event.summary = appointment.title
     if (appointment.notes !== undefined) event.description = appointment.notes || ''
     if (appointment.start_time) event.start = { dateTime: appointment.start_time }
@@ -161,12 +162,14 @@ export async function pullFromGoogleCalendar(): Promise<{ success: boolean; erro
     syncTransaction(items)
 
     return { success: true }
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error('Erro ao sincronizar com Google Calendar:', e)
     const isAuthError = handleGoogleAuthError(e)
+    const errObj = e as { message?: string } | null
     return {
       success: false,
-      error: isAuthError ? 'AUTH_ERROR' : (e.message || 'Erro desconhecido')
+      error: isAuthError ? 'AUTH_ERROR' : (errObj?.message || 'Erro desconhecido')
     }
   }
 }
+

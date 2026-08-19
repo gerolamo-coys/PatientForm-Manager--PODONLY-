@@ -92,8 +92,9 @@ export async function validateLicense(key: string): Promise<{ valid: boolean; er
     }
 
     return { valid: false, error: 'Chave de licença inválida ou não encontrada.' }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error validating license:', error)
+
     return { valid: false, error: 'Falha ao conectar com o servidor. Verifique sua conexão com a internet.' }
   }
 }
