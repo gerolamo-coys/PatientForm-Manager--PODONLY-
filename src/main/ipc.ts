@@ -58,57 +58,108 @@ import type {
   UpdateTransactionPayload
 } from '../shared/types'
 
+// ==========================================
+// Constantes de Validação e Limites de Segurança
+// ==========================================
+const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024 // 10 MB
+const ALLOWED_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp'])
+
+/**
+ * Valida se um valor numérico é um ID inteiro positivo seguro
+ */
+function isValidId(id: unknown): id is number {
+  return typeof id === 'number' && Number.isInteger(id) && id > 0
+}
+
+/**
+ * Sanitiza o nome de arquivo para prevenir Directory Traversal (ex: ../../etc)
+ */
+function sanitizeFileName(fileName: unknown): string | null {
+  if (typeof fileName !== 'string' || !fileName.trim()) return null
+  const base = path.basename(fileName.trim())
+  if (!base || base === '.' || base === '..') return null
+  return base
+}
+
+/**
+ * Garante que um caminho de arquivo esteja estritamente contido no diretório base autorizado
+ */
+function isSafeFilePath(baseDir: string, targetPath: string): boolean {
+  const relative = path.relative(baseDir, targetPath)
+  return !!relative && !relative.startsWith('..') && !path.isAbsolute(relative)
+}
+
 export function registerIpcHandlers() {
   ipcMain.handle('listPatients', (_, sortMode: SortMode, searchQuery: string) => {
-    return listPatients(sortMode, searchQuery)
+    const safeSort: SortMode = sortMode === 'alphabetical' ? 'alphabetical' : 'last_created'
+    const safeSearch = typeof searchQuery === 'string' ? searchQuery.slice(0, 100) : ''
+    return listPatients(safeSort, safeSearch)
   })
 
   ipcMain.handle('getPatientWithForm', (_, patientId: number) => {
+    if (!isValidId(patientId)) return null
     return getPatientWithForm(patientId)
   })
 
   ipcMain.handle('createPatientWithForm', (_, payload: CreatePatientWithFormPayload) => {
+    if (!payload || !payload.patient) {
+      throw new Error('Payload de paciente inválido.')
+    }
     return createPatientWithForm(payload)
   })
 
   ipcMain.handle('updatePatientWithForm', (_, patientId: number, payload: UpdatePatientWithFormPayload) => {
+    if (!isValidId(patientId) || !payload) return
     updatePatientWithForm(patientId, payload)
   })
 
   ipcMain.handle('deletePatients', (_, patientIds: number[]) => {
-    deletePatients(patientIds)
+    if (!Array.isArray(patientIds)) return
+    const safeIds = patientIds.filter(isValidId)
+    if (safeIds.length > 0) {
+      deletePatients(safeIds)
+    }
   })
 
   ipcMain.handle('getPatient', (_, patientId: number) => {
+    if (!isValidId(patientId)) return null
     return getPatient(patientId)
   })
 
   ipcMain.handle('getPatientForms', (_, patientId: number) => {
+    if (!isValidId(patientId)) return []
     return getPatientForms(patientId)
   })
 
   ipcMain.handle('getForm', (_, formId: number) => {
+    if (!isValidId(formId)) return null
     return getForm(formId)
   })
 
   ipcMain.handle('updatePatient', (_, patientId: number, payload: UpdatePatientPayload) => {
+    if (!isValidId(patientId) || !payload) return
     updatePatient(patientId, payload)
   })
 
   ipcMain.handle('createPatient', (_, payload: CreatePatientPayload) => {
+    if (!payload) throw new Error('Dados de paciente inválidos.')
     return createPatient(payload)
   })
 
   ipcMain.handle('createPatientForm', (_, patientId: number, payload: CreateFormPayload) => {
+    if (!isValidId(patientId) || !payload) throw new Error('Dados da ficha inválidos.')
     return createPatientForm(patientId, payload)
   })
 
   ipcMain.handle('updatePatientForm', (_, formId: number, payload: UpdateFormPayload) => {
+    if (!isValidId(formId) || !payload) return
     updatePatientForm(formId, payload)
   })
 
   ipcMain.handle('getAppointments', (_, start: string, end: string) => {
-    return getAppointments(start, end)
+    const safeStart = typeof start === 'string' ? start.slice(0, 50) : ''
+    const safeEnd = typeof end === 'string' ? end.slice(0, 50) : ''
+    return getAppointments(safeStart, safeEnd)
   })
 
   ipcMain.handle('getAllAppointments', () => {
@@ -116,14 +167,17 @@ export function registerIpcHandlers() {
   })
 
   ipcMain.handle('createAppointment', async (_, payload: CreateAppointmentPayload) => {
-    // Attempt to push to Google Calendar first
+    if (!payload || !payload.title || !payload.start_time || !payload.end_time) {
+      throw new Error('Dados de agendamento incompletos.')
+    }
+    // Tentativa de sincronização com Google Agenda
     const googleEventId = await createGoogleEvent(payload)
     const localPayload = { ...payload, google_event_id: googleEventId }
     return createAppointment(localPayload)
   })
 
   ipcMain.handle('updateAppointment', async (_, id: number, payload: UpdateAppointmentPayload) => {
-    // If it has a google_event_id, we need to fetch it to update Google Calendar
+    if (!isValidId(id) || !payload) return
     const appointments = getAllAppointments()
     const existing = appointments.find(a => a.id === id)
     if (existing && existing.google_event_id) {
@@ -133,6 +187,7 @@ export function registerIpcHandlers() {
   })
 
   ipcMain.handle('deleteAppointment', async (_, id: number) => {
+    if (!isValidId(id)) return
     const appointments = getAllAppointments()
     const existing = appointments.find(a => a.id === id)
     if (existing && existing.google_event_id) {
@@ -150,7 +205,8 @@ export function registerIpcHandlers() {
   })
 
   ipcMain.handle('validateLicense', async (_, key: string) => {
-    return validateLicense(key)
+    const safeKey = typeof key === 'string' ? key.trim().slice(0, 100) : ''
+    return validateLicense(safeKey)
   })
 
   ipcMain.handle('checkLicenseStatus', async () => {
@@ -173,35 +229,46 @@ export function registerIpcHandlers() {
         shell.openExternal(url)
       }
     } catch {
-      // Ignored if URL is invalid or unsafe protocol
+      // Ignora URLs inválidas ou protocolos não permitidos
     }
   })
 
   ipcMain.handle('createTransaction', (_, payload: CreateTransactionPayload) => {
+    if (!payload || typeof payload.amount !== 'number') {
+      throw new Error('Dados de transação financeira inválidos.')
+    }
     return createTransaction(payload)
   })
 
   ipcMain.handle('updateTransaction', (_, id: number, payload: UpdateTransactionPayload) => {
+    if (!isValidId(id) || !payload) return
     return updateTransaction(id, payload)
   })
 
   ipcMain.handle('deleteTransaction', (_, id: number) => {
+    if (!isValidId(id)) return
     return deleteTransaction(id)
   })
 
   ipcMain.handle('getTransactions', (_, startDate: string, endDate: string) => {
-    return getTransactions(startDate, endDate)
+    const safeStart = typeof startDate === 'string' ? startDate.slice(0, 50) : ''
+    const safeEnd = typeof endDate === 'string' ? endDate.slice(0, 50) : ''
+    return getTransactions(safeStart, safeEnd)
   })
 
   ipcMain.handle('getFinancialSummary', (_, startDate: string, endDate: string) => {
-    return getFinancialSummary(startDate, endDate)
+    const safeStart = typeof startDate === 'string' ? startDate.slice(0, 50) : ''
+    const safeEnd = typeof endDate === 'string' ? endDate.slice(0, 50) : ''
+    return getFinancialSummary(safeStart, safeEnd)
   })
 
   ipcMain.handle('getSetting', (_, key: string) => {
+    if (typeof key !== 'string') return null
     return getSetting(key)
   })
 
   ipcMain.handle('setSetting', (_, key: string, value: string) => {
+    if (typeof key !== 'string' || typeof value !== 'string') return
     setSetting(key, value)
   })
 
@@ -218,23 +285,47 @@ export function registerIpcHandlers() {
   })
 
   ipcMain.handle('sendTestWhatsappMessage', async (_, phone: string, message: string) => {
-    return sendTestWhatsappMessage(phone, message)
+    const safePhone = typeof phone === 'string' ? phone.trim().slice(0, 30) : ''
+    const safeMessage = typeof message === 'string' ? message.slice(0, 1000) : ''
+    return sendTestWhatsappMessage(safePhone, safeMessage)
   })
 
   ipcMain.handle('getPatientImages', (_, patientId: number) => {
+    if (!isValidId(patientId)) return []
     return getPatientImages(patientId)
   })
 
   ipcMain.handle('pickAndSavePatientImage', async (_, patientId: number) => {
+    if (!isValidId(patientId)) return null
+
     const { canceled, filePaths } = await dialog.showOpenDialog({
       properties: ['openFile'],
-      filters: [{ name: 'Images', extensions: ['jpg', 'png', 'jpeg', 'webp'] }]
+      filters: [{ name: 'Imagens', extensions: ['jpg', 'png', 'jpeg', 'webp'] }]
     })
 
     if (canceled || filePaths.length === 0) return null
 
     const sourcePath = filePaths[0]
-    const ext = path.extname(sourcePath)
+    const ext = path.extname(sourcePath).toLowerCase()
+
+    // Validação rigorosa de extensão
+    if (!ALLOWED_IMAGE_EXTENSIONS.has(ext)) {
+      console.warn('Upload rejeitado: extensão não permitida:', ext)
+      return null
+    }
+
+    // Validação rigorosa de tamanho de arquivo (máximo 10MB)
+    try {
+      const stat = await fs.stat(sourcePath)
+      if (stat.size > MAX_IMAGE_SIZE_BYTES) {
+        console.warn('Upload rejeitado: arquivo excede o limite de 10MB:', stat.size)
+        return null
+      }
+    } catch (e) {
+      console.error('Erro ao inspecionar arquivo de imagem:', e)
+      return null
+    }
+
     const uuid = crypto.randomUUID()
     const fileName = `${uuid}${ext}`
     
@@ -249,27 +340,52 @@ export function registerIpcHandlers() {
   })
 
   ipcMain.handle('updatePatientImageDescription', (_, id: number, description: string) => {
-    updatePatientImageDescription(id, description)
+    if (!isValidId(id)) return
+    const safeDesc = typeof description === 'string' ? description.slice(0, 1000) : ''
+    updatePatientImageDescription(id, safeDesc)
   })
 
   ipcMain.handle('deletePatientImage', async (_, id: number, fileName: string) => {
-    deletePatientImage(id)
+    if (isValidId(id)) {
+      deletePatientImage(id)
+    }
+
+    const safeName = sanitizeFileName(fileName)
+    if (!safeName) return
+
+    const targetDir = path.join(app.getPath('userData'), 'patient_images')
+    const targetPath = path.join(targetDir, safeName)
+
+    if (!isSafeFilePath(targetDir, targetPath)) {
+      console.warn('Tentativa de Directory Traversal bloqueada em deletePatientImage:', fileName)
+      return
+    }
+
     try {
-      const targetPath = path.join(app.getPath('userData'), 'patient_images', fileName)
       await fs.unlink(targetPath)
     } catch (e) {
-      console.error('Failed to delete image file', e)
+      console.error('Falha ao remover arquivo de imagem:', e)
     }
   })
 
   ipcMain.handle('readPatientImageBase64', async (_, fileName: string) => {
+    const safeName = sanitizeFileName(fileName)
+    if (!safeName) return null
+
+    const targetDir = path.join(app.getPath('userData'), 'patient_images')
+    const targetPath = path.join(targetDir, safeName)
+
+    if (!isSafeFilePath(targetDir, targetPath)) {
+      console.warn('Tentativa de Directory Traversal bloqueada em readPatientImageBase64:', fileName)
+      return null
+    }
+
     try {
-      const targetPath = path.join(app.getPath('userData'), 'patient_images', fileName)
       const buffer = await fs.readFile(targetPath)
-      const ext = path.extname(fileName).slice(1)
+      const ext = path.extname(safeName).slice(1)
       return `data:image/${ext};base64,${buffer.toString('base64')}`
     } catch (e) {
-      console.error('Failed to read image file', e)
+      console.error('Falha ao ler arquivo de imagem:', e)
       return null
     }
   })
@@ -283,7 +399,7 @@ export function registerIpcHandlers() {
 
     if (canceled || !filePath) return null
 
-    // Flush WAL to main database file to ensure data consistency
+    // Flush WAL para o banco principal garantindo integridade
     try {
       const { getDb } = require('./database')
       const dbInstance = getDb()
@@ -291,7 +407,7 @@ export function registerIpcHandlers() {
         dbInstance.pragma('wal_checkpoint(TRUNCATE)')
       }
     } catch (e) {
-      console.error('Failed to run wal_checkpoint before backup:', e)
+      console.error('Falha no wal_checkpoint antes do backup:', e)
     }
 
     return new Promise((resolve, reject) => {
@@ -301,19 +417,18 @@ export function registerIpcHandlers() {
         const archive = new archiverModule.ZipArchive({ zlib: { level: 9 } })
 
         output.on('close', () => {
-          // Save the timestamp of this backup
           const timestamp = new Date().toISOString()
           setSetting('last_backup_date', timestamp)
           resolve(filePath)
         })
 
         output.on('error', (err: any) => {
-          console.error('Output Stream Error', err)
+          console.error('Erro de Output Stream no backup:', err)
           reject(err)
         })
 
         archive.on('error', (err: any) => {
-          console.error('Backup Error', err)
+          console.error('Erro no Archiver durante o backup:', err)
           reject(err)
         })
 
@@ -341,7 +456,7 @@ export function registerIpcHandlers() {
 
         archive.finalize()
       } catch (err) {
-        console.error('Failed to initialize backup archiver', err)
+        console.error('Falha ao inicializar o backup:', err)
         reject(err)
       }
     })
@@ -371,31 +486,31 @@ export function registerIpcHandlers() {
         dbSize += shmStat.size
       }
     } catch (e) {
-      console.error(e)
+      console.error('Erro ao calcular tamanho do banco:', e)
     }
 
-    async function calculateDirSize(dirPath: string): Promise<number> {
+    async function calculateDirSize(dir: string): Promise<number> {
       let size = 0
       try {
-        const files = await fs.readdir(dirPath)
+        if (!existsSync(dir)) return 0
+        const files = await fs.readdir(dir, { withFileTypes: true })
         for (const file of files) {
-          const filePath = path.join(dirPath, file)
-          const stat = await fs.stat(filePath)
-          if (stat.isDirectory()) {
-            size += await calculateDirSize(filePath)
+          const fullPath = path.join(dir, file.name)
+          if (file.isDirectory()) {
+            size += await calculateDirSize(fullPath)
           } else {
-            size += stat.size
+            const s = await fs.stat(fullPath)
+            size += s.size
           }
         }
       } catch (e) {
-        // Ignored
+        // Ignorado
       }
       return size
     }
 
     imagesSize = await calculateDirSize(imagesPath)
     
-    // Return sizes in MB (with 2 decimal places)
     return {
       dbSize: parseFloat((dbSize / (1024 * 1024)).toFixed(2)),
       imagesSize: parseFloat((imagesSize / (1024 * 1024)).toFixed(2)),
@@ -406,22 +521,42 @@ export function registerIpcHandlers() {
   ipcMain.handle('pickAndSaveClinicLogo', async () => {
     const { canceled, filePaths } = await dialog.showOpenDialog({
       properties: ['openFile'],
-      filters: [{ name: 'Images', extensions: ['jpg', 'png', 'jpeg', 'webp'] }]
+      filters: [{ name: 'Imagens', extensions: ['jpg', 'png', 'jpeg', 'webp'] }]
     })
 
     if (canceled || filePaths.length === 0) return null
 
     const sourcePath = filePaths[0]
-    const ext = path.extname(sourcePath)
+    const ext = path.extname(sourcePath).toLowerCase()
+
+    if (!ALLOWED_IMAGE_EXTENSIONS.has(ext)) {
+      console.warn('Upload de logo rejeitado: extensão não permitida:', ext)
+      return null
+    }
+
+    try {
+      const stat = await fs.stat(sourcePath)
+      if (stat.size > MAX_IMAGE_SIZE_BYTES) {
+        console.warn('Upload de logo rejeitado: tamanho excede 10MB:', stat.size)
+        return null
+      }
+    } catch (e) {
+      console.error('Erro ao verificar tamanho do logo:', e)
+      return null
+    }
+
     const fileName = `clinic_logo${ext}`
-    const targetPath = path.join(app.getPath('userData'), fileName)
+    const targetDir = app.getPath('userData')
+    const targetPath = path.join(targetDir, fileName)
 
     const existingPath = getSetting('clinic_logo_path')
     if (existingPath && existingPath !== '') {
       try {
-        await fs.unlink(existingPath)
+        if (existsSync(existingPath)) {
+          await fs.unlink(existingPath)
+        }
       } catch (err) {
-        console.warn('Failed to delete previous logo file:', err)
+        console.warn('Falha ao remover arquivo de logo anterior:', err)
       }
     }
 
@@ -433,31 +568,34 @@ export function registerIpcHandlers() {
       const extName = ext.slice(1)
       return `data:image/${extName};base64,${buffer.toString('base64')}`
     } catch (e) {
-      console.error('Failed to read logo after pick', e)
+      console.error('Falha ao ler logo após upload:', e)
       return null
     }
   })
 
   ipcMain.handle('getClinicLogoBase64', async () => {
     const logoPath = getSetting('clinic_logo_path')
-    if (!logoPath || logoPath === '') return null
+    if (!logoPath || typeof logoPath !== 'string') return null
     try {
+      if (!existsSync(logoPath)) return null
       const buffer = await fs.readFile(logoPath)
       const ext = path.extname(logoPath).slice(1)
       return `data:image/${ext};base64,${buffer.toString('base64')}`
     } catch (e) {
-      console.error('Failed to read clinic logo file', e)
+      console.error('Falha ao ler arquivo do logotipo da clínica:', e)
       return null
     }
   })
 
   ipcMain.handle('deleteClinicLogo', async () => {
     const logoPath = getSetting('clinic_logo_path')
-    if (logoPath && logoPath !== '') {
+    if (logoPath && typeof logoPath === 'string') {
       try {
-        await fs.unlink(logoPath)
+        if (existsSync(logoPath)) {
+          await fs.unlink(logoPath)
+        }
       } catch (e) {
-        console.error('Failed to delete clinic logo file', e)
+        console.error('Falha ao deletar arquivo do logotipo da clínica:', e)
       }
     }
     setSetting('clinic_logo_path', '')
@@ -471,7 +609,7 @@ export function registerIpcHandlers() {
         dbInstance.close()
       }
     } catch (e) {
-      console.error('Error closing database', e)
+      console.error('Erro ao fechar o banco de dados:', e)
     }
 
     const userDataPath = app.getPath('userData')
@@ -486,11 +624,10 @@ export function registerIpcHandlers() {
       await fs.rm(dbShmPath, { force: true })
       await fs.rm(imagesPath, { recursive: true, force: true })
     } catch (e) {
-      console.error('Error deleting files during reset', e)
+      console.error('Erro ao apagar arquivos no reset de fábrica:', e)
     }
 
     app.relaunch()
     app.exit(0)
   })
 }
-
