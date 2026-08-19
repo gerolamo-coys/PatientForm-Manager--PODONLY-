@@ -80,3 +80,16 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+
+# WhatsApp runtime cache
+.wwebjs_cache/
+.wwebjs_auth/
+
+# Local databases and backups
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite*
+*_backup.zip
+*.zip
+

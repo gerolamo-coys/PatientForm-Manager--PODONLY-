@@ -2,6 +2,7 @@ import { google } from 'googleapis'
 import { shell } from 'electron'
 import http from 'http'
 import { URL } from 'url'
+import crypto from 'crypto'
 import { setSetting, getSetting } from './database'
 
 const REDIRECT_URI = 'http://localhost:3000/oauth2callback'
@@ -55,11 +56,13 @@ let authServer: http.Server | null = null
 
 export async function authenticateGoogle(): Promise<boolean> {
   const oauth2Client = getOAuth2Client()
+  const authState = crypto.randomBytes(32).toString('hex')
 
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: 'offline',
     scope: ['https://www.googleapis.com/auth/calendar.events'],
-    prompt: 'consent'
+    prompt: 'consent',
+    state: authState
   })
 
   return new Promise((resolve, reject) => {
@@ -76,6 +79,19 @@ export async function authenticateGoogle(): Promise<boolean> {
         if (req.url && req.url.startsWith('/oauth2callback')) {
           const qs = new URL(req.url, 'http://localhost:3000').searchParams
           const code = qs.get('code')
+          const returnedState = qs.get('state')
+
+          // Validação de CSRF: o estado retornado deve conferir exatamente com o gerado
+          if (!returnedState || returnedState !== authState) {
+            res.setHeader('Content-Type', 'text/html')
+            res.end('<h1>Falha de Segurança</h1><p>Parâmetro de estado OAuth inválido ou expirado.</p>')
+            if (authServer) {
+              authServer.close()
+              authServer = null
+            }
+            reject(new Error('Falha de verificação de estado OAuth (CSRF detectado).'))
+            return
+          }
           
           res.setHeader('Content-Type', 'text/html')
           res.end('<h1>Autenticação Concluída com Sucesso!</h1><p>Você pode fechar esta aba e retornar ao aplicativo.</p>')
@@ -122,3 +138,4 @@ export async function authenticateGoogle(): Promise<boolean> {
     })
   })
 }
+

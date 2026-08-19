@@ -166,7 +166,15 @@ export function registerIpcHandlers() {
   })
 
   ipcMain.handle('openExternalBrowser', (_, url: string) => {
-    shell.openExternal(url)
+    try {
+      if (!url || typeof url !== 'string') return
+      const parsed = new URL(url)
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+        shell.openExternal(url)
+      }
+    } catch {
+      // Ignored if URL is invalid or unsafe protocol
+    }
   })
 
   ipcMain.handle('createTransaction', (_, payload: CreateTransactionPayload) => {

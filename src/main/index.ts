@@ -16,7 +16,7 @@ import { registerIpcHandlers } from './ipc'
 import { initWhatsappService } from './whatsappService'
 
 function createWindow(): void {
-  // Configuração inicial da janela do aplicativo
+  // Configuração inicial da janela do aplicativo com isolamento de contexto e sandbox ativados
   const mainWindow = new BrowserWindow({
     width: 900,
     height: 670,
@@ -26,7 +26,9 @@ function createWindow(): void {
     icon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false
     }
   })
 
@@ -34,8 +36,30 @@ function createWindow(): void {
     mainWindow.show()
   })
 
+  // Previne navegações inesperadas para URLs externas dentro da janela principal
+  mainWindow.webContents.on('will-navigate', (event, navigationUrl) => {
+    // Permite apenas navegações dentro da própria aplicação local
+    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+      if (!navigationUrl.startsWith(process.env['ELECTRON_RENDERER_URL'])) {
+        event.preventDefault()
+      }
+    } else {
+      if (!navigationUrl.startsWith('file://')) {
+        event.preventDefault()
+      }
+    }
+  })
+
+  // Abertura segura de links externos no navegador padrão do sistema operacional
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    try {
+      const parsedUrl = new URL(details.url)
+      if (parsedUrl.protocol === 'https:' || parsedUrl.protocol === 'http:') {
+        shell.openExternal(details.url)
+      }
+    } catch {
+      // URL inválida ou protocolo perigoso (ex: file:, javascript:)
+    }
     return { action: 'deny' }
   })
 
