@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import { Save, X, User, Activity, AlertCircle, Plus, Calendar, Clock, Image as ImageIcon, Trash2, ArrowLeft, Search } from 'lucide-react'
+import { Save, X, User, Activity, AlertCircle, Plus, Calendar, Clock, Image as ImageIcon, Trash2, Search } from 'lucide-react'
 import { Patient, PodiatryHistoryForm, PatientImage } from '../../../shared/types'
 import { calculateAge } from '../utils/ageHelper'
 
@@ -147,7 +147,7 @@ export default function PatientDetails() {
     }
   }
 
-  const handleCheckboxArrayChange = (field: 'nail_shape', value: string) => {
+  const handleCheckboxArrayChange = (field: 'nail_shape' | 'shoe_type', value: string) => {
     try {
       const current: string[] = JSON.parse(patient[field] || '[]')
       if (current.includes(value)) {

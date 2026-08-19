@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Save, X, Activity, ClipboardList, AlertCircle, Map, User, FileText, ArrowLeft } from 'lucide-react'
+import { Save, X, Activity, ClipboardList, AlertCircle, Map, User, FileText } from 'lucide-react'
 import FootMapCanvas from '../components/FootMapCanvas'
 import { calculateAge } from '../utils/ageHelper'
 

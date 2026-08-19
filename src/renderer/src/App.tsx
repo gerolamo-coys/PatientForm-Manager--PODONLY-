@@ -107,7 +107,6 @@ function AppGuard({ children }: { children: React.ReactNode }) {
 
 function AppContent(): React.JSX.Element {
   const location = useLocation()
-  const navigate = useNavigate()
   const isActivation = location.pathname === '/activation'
   const match = location.pathname.match(/\/patient\/(\d+)/)
   const backLink = location.pathname.includes('/form/') && match ? `/patient/${match[1]}` : '/patients'
