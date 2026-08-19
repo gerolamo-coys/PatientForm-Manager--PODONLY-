@@ -39,7 +39,9 @@ export function getOAuth2Client() {
       if (existingTokensStr) {
         existingTokens = JSON.parse(existingTokensStr)
       }
-    } catch (e) {}
+    } catch {
+      // Ignore JSON parse errors for existing tokens
+    }
 
     const updatedTokens = {
       ...existingTokens,
@@ -70,9 +72,12 @@ export async function authenticateGoogle(): Promise<boolean> {
     if (authServer) {
       try {
         authServer.close()
-      } catch (e) {}
+      } catch {
+        // Ignored
+      }
       authServer = null
     }
+
 
     authServer = http.createServer(async (req, res) => {
       try {

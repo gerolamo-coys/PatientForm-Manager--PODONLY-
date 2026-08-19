@@ -503,9 +503,10 @@ export function registerIpcHandlers() {
             size += s.size
           }
         }
-      } catch (e) {
+      } catch {
         // Ignorado
       }
+
       return size
     }
 

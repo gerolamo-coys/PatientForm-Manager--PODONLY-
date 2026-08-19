@@ -28,9 +28,10 @@ export async function validateLicense(key: string): Promise<{ valid: boolean; er
           return { valid: false, error: webData.error || 'Licença inválida' }
         }
       }
-    } catch (e) {
+    } catch {
       // Local web app server not running
     }
+
 
     // 2. Direct Supabase RPC Call
     try {

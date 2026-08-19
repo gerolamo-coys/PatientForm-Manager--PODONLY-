@@ -135,9 +135,10 @@ export function initDatabase() {
   for (const stmt of alterStatements) {
     try {
       db.exec(stmt)
-    } catch (err) {
+    } catch {
       // Ignore if column exists
     }
+
   }
 }
 
