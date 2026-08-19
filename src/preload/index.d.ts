@@ -57,7 +57,7 @@ export interface IAPI {
   readPatientImageBase64: (fileName: string) => Promise<string | null>
   createBackup: () => Promise<string | null>
   getDiskUsage: () => Promise<{ dbSize: number; imagesSize: number; totalSize: number }>
-  factoryReset: () => Promise<void>
+  factoryReset: (confirmationToken: string) => Promise<boolean>
   pickAndSaveClinicLogo: () => Promise<string | null>
   getClinicLogoBase64: () => Promise<string | null>
   deleteClinicLogo: () => Promise<boolean>

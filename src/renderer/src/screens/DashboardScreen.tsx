@@ -365,9 +365,10 @@ export default function DashboardScreen(): React.JSX.Element {
       return
     }
     if (window.confirm('ATENÇÃO EXTREMA: Isso apagará TODOS os pacientes, consultas, fotos e configurações permanentemente! O aplicativo será reiniciado totalmente limpo. Deseja prosseguir?')) {
-      await window.api.factoryReset()
+      await window.api.factoryReset('APAGAR')
     }
   }
+
 
   const getStatusDetails = () => {
     switch (botStatus) {

@@ -602,7 +602,13 @@ export function registerIpcHandlers() {
     return true
   })
 
-  ipcMain.handle('factoryReset', async () => {
+  ipcMain.handle('factoryReset', async (_, confirmationToken: string) => {
+    // Exige estritamente a confirmação digitada para prevenir invocações acidentais ou não autorizadas
+    if (typeof confirmationToken !== 'string' || confirmationToken.trim() !== 'APAGAR') {
+      console.warn('Tentativa de Factory Reset rejeitada: confirmação inválida.')
+      return false
+    }
+
     try {
       const dbInstance = getDb()
       if (dbInstance) {
@@ -629,5 +635,7 @@ export function registerIpcHandlers() {
 
     app.relaunch()
     app.exit(0)
+    return true
   })
 }
+

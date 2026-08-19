@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 import path from 'path'
-import { app } from 'electron'
+import { app, safeStorage } from 'electron'
 import type {
   Patient,
   PodiatryHistoryForm,
@@ -382,19 +382,59 @@ export function deleteAppointment(id: number): void {
   stmt.run(id)
 }
 
+const SENSITIVE_SETTING_KEYS = new Set([
+  'google_auth_tokens',
+  'google_client_secret'
+])
+
 export function getSetting(key: string): string | null {
   const stmt = db.prepare(`SELECT value FROM settings WHERE key = ?`)
   const result = stmt.get(key) as { value: string } | undefined
-  return result ? result.value : null
+  if (!result || !result.value) return null
+
+  const rawValue = result.value
+
+  // Descriptografa com safeStorage se estiver criptografado com o prefixo 'enc:'
+  if (rawValue.startsWith('enc:') && safeStorage && safeStorage.isEncryptionAvailable()) {
+    try {
+      const buffer = Buffer.from(rawValue.slice(4), 'base64')
+      return safeStorage.decryptString(buffer)
+    } catch (err) {
+      console.error('Falha ao descriptografar configuração segura com safeStorage:', err)
+      return null
+    }
+  }
+
+  return rawValue
 }
 
 export function setSetting(key: string, value: string): void {
+  let valueToStore = value
+
+  // Criptografa chaves sensíveis em repouso usando o cofre seguro do SO (safeStorage)
+  if (
+    SENSITIVE_SETTING_KEYS.has(key) &&
+    value &&
+    value !== '' &&
+    safeStorage &&
+    safeStorage.isEncryptionAvailable()
+  ) {
+    try {
+      const encryptedBuffer = safeStorage.encryptString(value)
+      valueToStore = 'enc:' + encryptedBuffer.toString('base64')
+    } catch (err) {
+      console.error('Falha ao criptografar configuração com safeStorage:', err)
+      valueToStore = value
+    }
+  }
+
   const stmt = db.prepare(`
     INSERT INTO settings (key, value) VALUES (@key, @value)
     ON CONFLICT(key) DO UPDATE SET value = @value, updated_at = CURRENT_TIMESTAMP
   `)
-  stmt.run({ key, value })
+  stmt.run({ key, value: valueToStore })
 }
+
 
 export function getPatientImages(patientId: number): any[] {
   const stmt = db.prepare(`SELECT * FROM patient_images WHERE patient_id = ? ORDER BY created_at DESC`)
