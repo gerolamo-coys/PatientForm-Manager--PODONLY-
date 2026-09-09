@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { parseCredentialsJson, getClientCredentials, getRedirectUri } from '../main/googleAuth'
+import { parseCredentialsJson, getClientCredentials, getRedirectUri, getAuthenticatedClient } from '../main/googleAuth'
 
 vi.mock('../main/database', () => ({
   getSetting: vi.fn(),
@@ -8,7 +8,14 @@ vi.mock('../main/database', () => ({
   getDb: vi.fn()
 }))
 
+vi.mock('../main/secretStorage', () => ({
+  loadGoogleTokens: vi.fn(),
+  saveGoogleTokens: vi.fn(),
+  migrateLegacyTokens: vi.fn()
+}))
+
 import { getSetting } from '../main/database'
+import { loadGoogleTokens } from '../main/secretStorage'
 
 describe('Google Auth Module', () => {
   beforeEach(() => {
@@ -109,6 +116,35 @@ describe('Google Auth Module', () => {
     it('should return custom redirect uri if configured in database', () => {
       vi.mocked(getSetting).mockReturnValue('http://localhost:3000/oauth2callback')
       expect(getRedirectUri()).toBe('http://localhost:3000/oauth2callback')
+    })
+  })
+
+  describe('getAuthenticatedClient', () => {
+    it('should throw NOT_CONNECTED when no tokens exist', async () => {
+      vi.mocked(getSetting).mockImplementation((key: string) => {
+        if (key === 'google_client_id') return 'client-id.apps.googleusercontent.com'
+        if (key === 'google_client_secret') return 'client-secret'
+        return null
+      })
+      vi.mocked(loadGoogleTokens).mockReturnValue(null)
+
+      await expect(getAuthenticatedClient()).rejects.toThrow('NOT_CONNECTED')
+    })
+
+    it('should return client with credentials when tokens exist', async () => {
+      vi.mocked(getSetting).mockImplementation((key: string) => {
+        if (key === 'google_client_id') return 'client-id.apps.googleusercontent.com'
+        if (key === 'google_client_secret') return 'client-secret'
+        return null
+      })
+      vi.mocked(loadGoogleTokens).mockReturnValue({
+        access_token: 'valid-access-token',
+        refresh_token: 'valid-refresh-token',
+        expiry_date: Date.now() + 3600000
+      })
+
+      const client = await getAuthenticatedClient()
+      expect(client).toBeDefined()
     })
   })
 })

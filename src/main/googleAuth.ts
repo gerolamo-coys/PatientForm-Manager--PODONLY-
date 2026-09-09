@@ -72,7 +72,7 @@ export function getOAuth2Client() {
     oauth2Client.setCredentials(tokens)
   }
 
-  // Atualiza tokens automaticamente quando são renovados
+  // Atualiza e persiste tokens automaticamente quando são renovados pelo Google
   oauth2Client.on('tokens', (newTokens) => {
     try {
       const existingTokens = loadGoogleTokens() || {}
@@ -80,11 +80,51 @@ export function getOAuth2Client() {
         ...existingTokens,
         ...newTokens
       }
+      // Garante que o refresh_token nunca seja sobregravado com vazio se o Google não o reenviar
+      if (!updatedTokens.refresh_token && existingTokens.refresh_token) {
+        updatedTokens.refresh_token = existingTokens.refresh_token
+      }
       saveGoogleTokens(updatedTokens)
     } catch (e: unknown) {
       console.error('Falha ao salvar tokens renovados do Google:', e)
     }
   })
+
+  return oauth2Client
+}
+
+/**
+ * Retorna um cliente OAuth2 com credenciais válidas, garantindo que se o access_token
+ * estiver expirado mas houver refresh_token, ele seja renovado silenciosamente antes da chamada.
+ */
+export async function getAuthenticatedClient() {
+  const oauth2Client = getOAuth2Client()
+  const tokens = loadGoogleTokens()
+  if (!tokens || (!tokens.access_token && !tokens.refresh_token)) {
+    throw new Error('NOT_CONNECTED')
+  }
+
+  // Se houver expiry_date e estiver próximo do vencimento (ou vencido) com refresh_token presente, renova proativamente
+  const isExpired = tokens.expiry_date && (Date.now() >= tokens.expiry_date - 60000)
+  if ((!tokens.access_token || isExpired) && tokens.refresh_token) {
+    try {
+      const refreshed = await oauth2Client.refreshAccessToken()
+      const newTokens = refreshed.credentials
+      oauth2Client.setCredentials(newTokens)
+      const existingTokens = loadGoogleTokens() || {}
+      saveGoogleTokens({
+        ...existingTokens,
+        ...newTokens,
+        refresh_token: newTokens.refresh_token || existingTokens.refresh_token
+      })
+    } catch (refreshErr: any) {
+      console.warn('Tentativa de renovação de access_token com refresh_token:', refreshErr?.message || refreshErr)
+      // Se o refresh_token foi explicitamente revogado pelo usuário (invalid_grant), repassa
+      if (refreshErr?.message?.includes('invalid_grant')) {
+        throw refreshErr
+      }
+    }
+  }
 
   return oauth2Client
 }

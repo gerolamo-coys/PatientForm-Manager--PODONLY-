@@ -276,7 +276,7 @@ export const FootMapCanvas: React.FC<FootMapCanvasProps> = ({
           type="button"
           className={`tool-btn ${activeTool === 'draw' ? 'active' : ''}`}
           onClick={() => setActiveTool('draw')}
-          title="Draw"
+          title="Desenhar Livre (Traço)"
         >
           <Pen size={16} />
         </button>
@@ -285,7 +285,7 @@ export const FootMapCanvas: React.FC<FootMapCanvasProps> = ({
           type="button"
           className={`tool-btn ${activeTool === 'erase' ? 'active' : ''}`}
           onClick={() => setActiveTool('erase')}
-          title="Erase"
+          title="Borracha"
         >
           <Eraser size={16} />
         </button>
@@ -296,7 +296,7 @@ export const FootMapCanvas: React.FC<FootMapCanvasProps> = ({
           type="button"
           className={`tool-btn ${activeTool === 'star' ? 'active' : ''}`}
           onClick={() => setActiveTool('star')}
-          title="Verruga (Star)"
+          title="Demarcar Verruga (Estrela)"
         >
           <Star size={16} />
         </button>
@@ -305,7 +305,7 @@ export const FootMapCanvas: React.FC<FootMapCanvasProps> = ({
           type="button"
           className={`tool-btn ${activeTool === 'circle' ? 'active' : ''}`}
           onClick={() => setActiveTool('circle')}
-          title="Calo (Circle)"
+          title="Demarcar Calo (Círculo)"
         >
           <Circle size={16} />
         </button>
@@ -314,7 +314,7 @@ export const FootMapCanvas: React.FC<FootMapCanvasProps> = ({
           type="button"
           className={`tool-btn ${activeTool === 'square' ? 'active' : ''}`}
           onClick={() => setActiveTool('square')}
-          title="Queratose (Square)"
+          title="Demarcar Queratose (Quadrado)"
         >
           <Square size={16} />
         </button>
@@ -323,7 +323,7 @@ export const FootMapCanvas: React.FC<FootMapCanvasProps> = ({
           type="button"
           className={`tool-btn ${activeTool === 'triangle' ? 'active' : ''}`}
           onClick={() => setActiveTool('triangle')}
-          title="Trauma (Triangle)"
+          title="Demarcar Trauma / Lesão (Triângulo)"
         >
           <Triangle size={16} />
         </button>
@@ -332,7 +332,7 @@ export const FootMapCanvas: React.FC<FootMapCanvasProps> = ({
           type="button"
           className={`tool-btn ${activeTool === 'diamond' ? 'active' : ''}`}
           onClick={() => setActiveTool('diamond')}
-          title="Onicomicose (Diamond)"
+          title="Demarcar Onicomicose (Losango)"
         >
           <Diamond size={16} />
         </button>
@@ -341,7 +341,7 @@ export const FootMapCanvas: React.FC<FootMapCanvasProps> = ({
           type="button"
           className={`tool-btn ${activeTool === 'plus' ? 'active' : ''}`}
           onClick={() => setActiveTool('plus')}
-          title="Calo Interdigital / Úlcera (Plus)"
+          title="Demarcar Calo Interdigital / Úlcera (Cruz)"
         >
           <Plus size={16} />
         </button>
@@ -352,16 +352,21 @@ export const FootMapCanvas: React.FC<FootMapCanvasProps> = ({
           type="button"
           className="tool-btn danger"
           onClick={clearCanvas}
+          title="Limpar todas as marcações do mapa"
         >
-          <Trash2 size={16} /> Clear All
+          <Trash2 size={16} /> Limpar Tudo
         </button>
       </div>
 
       <div className="canvas-wrapper" ref={containerRef}>
         <img 
           src={canvasBackgroundSrc} 
-          alt="Feet Map" 
+          alt="Mapa dos pés" 
           className="canvas-background"
+          onError={() => {
+            console.warn('Falha ao carregar diagrama personalizado dos pés, restaurando imagem padrão...')
+            setCanvasBackgroundSrc(feetMapImg)
+          }}
           onLoad={() => {
             // Trigger a resize to match image dimensions exactly when it loads
             window.dispatchEvent(new Event('resize'));

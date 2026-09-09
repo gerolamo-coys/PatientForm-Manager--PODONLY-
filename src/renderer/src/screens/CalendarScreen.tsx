@@ -134,6 +134,7 @@ export default function CalendarScreen(): React.JSX.Element {
   const [saveToast, setSaveToast] = useState<{ message: string; type?: 'success' | 'error' } | null>(null)
   const [defaultDuration, setDefaultDuration] = useState(60)
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null)
+  const [syncWarning, setSyncWarning] = useState<string | null>(null)
   const [sendingWhatsappId, setSendingWhatsappId] = useState<number | null>(null)
 
   // Form State
@@ -319,6 +320,7 @@ export default function CalendarScreen(): React.JSX.Element {
     try {
       const result = await window.api.pullFromGoogleCalendar()
       if (result && result.success) {
+        setSyncWarning(null)
         await loadAppointments()
         const nowIso = new Date().toISOString()
         await window.api.setSetting('last_google_sync_time', nowIso)
@@ -327,13 +329,26 @@ export default function CalendarScreen(): React.JSX.Element {
       } else if (result && !result.success) {
         if (result.error === 'AUTH_ERROR') {
           setIsAuthenticated(false)
+          setSyncWarning('Sua sessão do Google Agenda expirou ou foi revogada. Clique em "Conectar Google" para renovar o acesso.')
           showToast('Sessão do Google Agenda expirada. Reconecte a conta.', 'error')
-        } else if (notify) {
-          showToast(`Erro na sincronização: ${result.error}`, 'error')
+        } else {
+          const isOffline = !navigator.onLine || (result.error && (result.error.includes('ENOTFOUND') || result.error.includes('fetch failed') || result.error.includes('network')))
+          const msg = isOffline 
+            ? 'Sem conexão com a internet. Os agendamentos locais estão salvos e sincronizarão quando a rede retornar.'
+            : `Instabilidade no Google Calendar: ${result.error}`
+          setSyncWarning(msg)
+          if (notify) {
+            showToast(msg, 'error')
+          }
         }
       }
     } catch (e: any) {
-      if (notify) showToast(`Erro ao sincronizar: ${e.message}`, 'error')
+      const isOffline = !navigator.onLine || (e?.message && (e.message.includes('ENOTFOUND') || e.message.includes('fetch failed')))
+      const msg = isOffline
+        ? 'Sem conexão com a internet. O sistema continuará operando localmente.'
+        : `Erro ao sincronizar: ${e.message || 'Falha de comunicação'}`
+      setSyncWarning(msg)
+      if (notify) showToast(msg, 'error')
     } finally {
       setIsSyncing(false)
     }
@@ -651,6 +666,46 @@ export default function CalendarScreen(): React.JSX.Element {
             </button>
           </div>
         </div>
+
+        {/* Sync / Connectivity Warning Banner */}
+        {syncWarning && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            background: 'rgba(239, 68, 68, 0.08)',
+            border: '1px solid rgba(239, 68, 68, 0.25)',
+            color: '#dc2626',
+            borderRadius: '10px',
+            padding: '0.6rem 1rem',
+            marginBottom: '1rem',
+            fontSize: '0.82rem',
+            gap: '0.75rem'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <AlertCircle size={16} style={{ flexShrink: 0 }} />
+              <span>{syncWarning}</span>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => handleSync(true)}
+                style={{ fontSize: '0.75rem', padding: '0.25rem 0.65rem' }}
+              >
+                Tentar Novamente
+              </button>
+              <button
+                type="button"
+                onClick={() => setSyncWarning(null)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', display: 'flex' }}
+                title="Fechar aviso"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Custom Glassmorphic Toolbar: View Switchers, Navigation & Filters */}
         <div style={{

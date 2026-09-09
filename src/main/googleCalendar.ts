@@ -1,5 +1,5 @@
 import { google } from 'googleapis'
-import { getOAuth2Client, hasGoogleCredentials } from './googleAuth'
+import { getAuthenticatedClient, hasGoogleCredentials } from './googleAuth'
 import { getDb, createAppointment, updateAppointment, setSetting } from './database'
 import { loadGoogleTokens, deleteGoogleTokens } from './secretStorage'
 import type { Appointment, GoogleSyncResult } from '../shared/types'
@@ -11,22 +11,34 @@ function hasActiveGoogleSession(): boolean {
 }
 
 /**
- * Trata erros de autenticação do Google e limpa credenciais expiradas ou revogadas
+ * Identifica se um erro retornado pelo Google é de credenciais revogadas/inválidas (ex: invalid_grant)
+ * e não uma simples oscilação de rede (ex: ENOTFOUND, ECONNRESET, timeout)
  */
-function handleGoogleAuthError(error: unknown): boolean {
-  const err = error as { message?: string; code?: number | string; status?: number | string; response?: { status?: number | string } } | null | undefined
-  const errMsg = err?.message || ''
+function isGoogleAuthError(error: unknown): boolean {
+  const err = error as { message?: string; code?: number | string; status?: number | string; response?: { status?: number | string; data?: any } } | null | undefined
+  const errMsg = (err?.message || '').toLowerCase()
+  const dataError = (typeof err?.response?.data?.error === 'string' ? err?.response?.data?.error : '').toLowerCase()
+  const dataDesc = (typeof err?.response?.data?.error_description === 'string' ? err?.response?.data?.error_description : '').toLowerCase()
   const errCode = err?.code || ''
   const status = err?.status || err?.response?.status || ''
 
-  if (
+  // Erros explícitos de revogação/permissão
+  return (
     errMsg.includes('invalid_grant') ||
     errMsg.includes('invalid_token') ||
-    errMsg.includes('unauthorized') ||
+    dataError.includes('invalid_grant') ||
+    dataDesc.includes('token has been expired or revoked') ||
     errCode === 401 ||
     status === 401
-  ) {
-    console.warn('Credenciais do Google inválidas ou revogadas. Limpando tokens de autenticação...')
+  )
+}
+
+/**
+ * Trata erros de autenticação do Google e limpa credenciais apenas se foram comprovadamente revogadas
+ */
+function handleGoogleAuthError(error: unknown): boolean {
+  if (isGoogleAuthError(error)) {
+    console.warn('Credenciais do Google definitivamente revogadas ou expiradas (invalid_grant). Limpando sessão...')
     try {
       deleteGoogleTokens()
       setSetting('google_account_email', '')
@@ -43,7 +55,7 @@ export async function createGoogleEvent(appointment: Omit<Appointment, 'id' | 'c
   if (!hasActiveGoogleSession()) return null
 
   try {
-    const oauth2Client = getOAuth2Client()
+    const oauth2Client = await getAuthenticatedClient()
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client })
 
     const event = {
@@ -70,7 +82,7 @@ export async function updateGoogleEvent(googleEventId: string, appointment: Part
   if (!hasActiveGoogleSession()) return false
 
   try {
-    const oauth2Client = getOAuth2Client()
+    const oauth2Client = await getAuthenticatedClient()
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client })
 
     const event: Record<string, unknown> = {}
@@ -97,7 +109,7 @@ export async function deleteGoogleEvent(googleEventId: string): Promise<boolean>
   if (!hasActiveGoogleSession()) return false
 
   try {
-    const oauth2Client = getOAuth2Client()
+    const oauth2Client = await getAuthenticatedClient()
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client })
 
     await calendar.events.delete({
@@ -119,7 +131,7 @@ export async function pullFromGoogleCalendar(): Promise<GoogleSyncResult> {
   }
 
   try {
-    const oauth2Client = getOAuth2Client()
+    const oauth2Client = await getAuthenticatedClient()
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client })
     const db = getDb()
 
