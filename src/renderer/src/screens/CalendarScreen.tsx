@@ -131,6 +131,7 @@ export default function CalendarScreen(): React.JSX.Element {
   const [configTab, setConfigTab] = useState<'import' | 'manual'>('import')
   const [clientId, setClientId] = useState('')
   const [clientSecret, setClientSecret] = useState('')
+  const [redirectUri, setRedirectUri] = useState('http://127.0.0.1:3000/oauth2callback')
   const [saveToast, setSaveToast] = useState<{ message: string; type?: 'success' | 'error' } | null>(null)
   const [defaultDuration, setDefaultDuration] = useState(60)
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null)
@@ -227,8 +228,10 @@ export default function CalendarScreen(): React.JSX.Element {
 
       const id = await window.api.getSetting('google_client_id')
       const secret = await window.api.getSetting('google_client_secret')
+      const uri = await window.api.getSetting('google_redirect_uri')
       if (id) setClientId(id)
       if (secret) setClientSecret(secret)
+      if (uri) setRedirectUri(uri)
 
       return status.isConnected
     } catch {
@@ -274,12 +277,14 @@ export default function CalendarScreen(): React.JSX.Element {
   const handleSaveConfig = async () => {
     const trimmedId = clientId.trim()
     const trimmedSecret = clientSecret.trim()
+    const trimmedUri = redirectUri.trim() || 'http://127.0.0.1:3000/oauth2callback'
     if (!trimmedId || !trimmedSecret) {
       showToast('Preencha o Client ID e o Client Secret.', 'error')
       return
     }
     await window.api.setSetting('google_client_id', trimmedId)
     await window.api.setSetting('google_client_secret', trimmedSecret)
+    await window.api.setSetting('google_redirect_uri', trimmedUri)
     setIsConfigured(true)
     showToast('Credenciais do Google salvas com sucesso!')
     setShowAdvancedConfig(false)
@@ -290,6 +295,8 @@ export default function CalendarScreen(): React.JSX.Element {
     if (res && res.success && res.clientId && res.clientSecret) {
       setClientId(res.clientId)
       setClientSecret(res.clientSecret)
+      const uri = await window.api.getSetting('google_redirect_uri')
+      if (uri) setRedirectUri(uri)
       setIsConfigured(true)
       showToast('Arquivo de credenciais importado com sucesso!')
       setShowAdvancedConfig(false)
@@ -301,6 +308,7 @@ export default function CalendarScreen(): React.JSX.Element {
   const handleAuthenticate = async () => {
     const trimmedId = clientId.trim()
     const trimmedSecret = clientSecret.trim()
+    const trimmedUri = redirectUri.trim() || 'http://127.0.0.1:3000/oauth2callback'
 
     if (!isConfigured && (!trimmedId || !trimmedSecret)) {
       setShowConfig(true)
@@ -312,6 +320,7 @@ export default function CalendarScreen(): React.JSX.Element {
     if (trimmedId && trimmedSecret) {
       await window.api.setSetting('google_client_id', trimmedId)
       await window.api.setSetting('google_client_secret', trimmedSecret)
+      await window.api.setSetting('google_redirect_uri', trimmedUri)
       setIsConfigured(true)
     }
 
@@ -1542,6 +1551,14 @@ export default function CalendarScreen(): React.JSX.Element {
                       <div className="form-group" style={{ marginBottom: '0.5rem' }}>
                         <label className="form-label" style={{ fontSize: '0.78rem' }}>Client Secret</label>
                         <input type="password" className="form-control" style={{ fontSize: '0.82rem', padding: '0.35rem 0.6rem' }} value={clientSecret} onChange={e => setClientSecret(e.target.value)} placeholder="Ex: GOCSPX-..." />
+                      </div>
+                      <div className="form-group" style={{ marginBottom: '0.5rem' }}>
+                        <label className="form-label" style={{ fontSize: '0.78rem' }}>URI de Redirecionamento (Redirect URI)</label>
+                        <input className="form-control" style={{ fontSize: '0.82rem', padding: '0.35rem 0.6rem' }} value={redirectUri} onChange={e => setRedirectUri(e.target.value)} placeholder="http://127.0.0.1:3000/oauth2callback" />
+                        <div style={{ display: 'flex', gap: '0.35rem', marginTop: '0.35rem' }}>
+                          <button type="button" className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.15rem 0.4rem' }} onClick={() => setRedirectUri('http://127.0.0.1:3000/oauth2callback')}>127.0.0.1</button>
+                          <button type="button" className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.15rem 0.4rem' }} onClick={() => setRedirectUri('http://localhost:3000/oauth2callback')}>localhost</button>
+                        </div>
                       </div>
                       <button type="button" className="btn btn-secondary" style={{ width: '100%', fontSize: '0.8rem', padding: '0.4rem' }} onClick={handleSaveConfig}>
                         Salvar Chaves
