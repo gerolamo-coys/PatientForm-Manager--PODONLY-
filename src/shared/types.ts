@@ -59,6 +59,8 @@ export type UpdateFormPayload = Partial<CreateFormPayload>
 
 export type SortMode = 'alphabetical' | 'last_created'
 
+export type AppointmentStatus = 'SCHEDULED' | 'CONFIRMED' | 'COMPLETED' | 'CANCELLED' | 'NO_SHOW'
+
 export interface Appointment {
   id: number
   patient_id: number | null
@@ -67,12 +69,22 @@ export interface Appointment {
   end_time: string
   notes: string | null
   google_event_id: string | null
+  status: AppointmentStatus
+  service_type: string | null
+  price: number | null
   created_at: string
   updated_at: string
 }
 
 export type CreateAppointmentPayload = Omit<Appointment, 'id' | 'created_at' | 'updated_at'>
 export type UpdateAppointmentPayload = Partial<CreateAppointmentPayload>
+
+export interface GoogleSyncResult {
+  success: boolean
+  error?: string
+  lastSyncTime?: string
+  syncedCount?: number
+}
 
 export interface GoogleAuthTokens {
   access_token: string

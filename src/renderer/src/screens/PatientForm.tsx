@@ -1,15 +1,35 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Save, X, Activity, ClipboardList, AlertCircle, Map, User, FileText } from 'lucide-react'
+import { Save, X, Activity, ClipboardList, AlertCircle, Map, User, FileText, Settings, Plus, Edit2, Trash2, RotateCcw, Copy, History, Sparkles, Printer } from 'lucide-react'
 import FootMapCanvas from '../components/FootMapCanvas'
 import { calculateAge } from '../utils/ageHelper'
+import type { Patient } from '../../../shared/types'
+import PrintDocumentModal from '../components/PrintDocumentModal'
 
-const HOME_CARE_TEMPLATES = {
-  "Pé Diabético": "Recomendações Home Care (Pé Diabético): \n- Inspeção diária dos pés.\n- Secar bem entre os dedos após o banho.\n- Uso de calçados confortáveis e sem costuras internas.\n- Hidratação diária, evitando a região entre os dedos.\n- Não andar descalço.\n- Cortar as unhas retas.",
-  "Higienização Calçados": "Recomendações Home Care (Higienização de Calçados): \n- Limpar os calçados com pano úmido e sabão neutro.\n- Deixar secar em local arejado e à sombra.\n- Alternar o uso dos calçados, não usando o mesmo par por dias seguidos.\n- Utilizar talco ou spray antisséptico para prevenir odores e fungos.",
-  "Onicocriptose": "Recomendações Home Care (Onicocriptose): \n- Evitar o uso de calçados de bico fino ou muito apertados.\n- Cortar as unhas de forma reta, sem arredondar os cantos.\n- Em caso de dor ou inflamação, retornar ao podólogo.\n- Não tentar desencravar em casa."
-};
+export interface HomeCareTemplate {
+  id: string
+  title: string
+  content: string
+}
+
+const DEFAULT_HOME_CARE_TEMPLATES: HomeCareTemplate[] = [
+  {
+    id: 'pe_diabetico',
+    title: 'Pé Diabético',
+    content: "Recomendações Home Care (Pé Diabético):\n- Inspeção diária dos pés.\n- Secar bem entre os dedos após o banho.\n- Uso de calçados confortáveis e sem costuras internas.\n- Hidratação diária, evitando a região entre os dedos.\n- Não andar descalço.\n- Cortar as unhas retas."
+  },
+  {
+    id: 'higienizacao_calcados',
+    title: 'Higienização Calçados',
+    content: "Recomendações Home Care (Higienização de Calçados):\n- Limpar os calçados com pano úmido e sabão neutro.\n- Deixar secar em local arejado e à sombra.\n- Alternar o uso dos calçados, não usando o mesmo par por dias seguidos.\n- Utilizar talco ou spray antisséptico para prevenir odores e fungos."
+  },
+  {
+    id: 'onicocriptose',
+    title: 'Onicocriptose',
+    content: "Recomendações Home Care (Onicocriptose):\n- Evitar o uso de calçados de bico fino ou muito apertados.\n- Cortar as unhas de forma reta, sem arredondar os cantos.\n- Em caso de dor ou inflamação, retornar ao podólogo.\n- Não tentar desencravar em casa."
+  }
+]
 
 export default function PatientForm() {
   const { id, formId } = useParams<{ id: string; formId?: string }>()
@@ -30,7 +50,8 @@ export default function PatientForm() {
   const [error, setError] = useState<string | null>(null)
   const [saveSuccess, setSaveSuccess] = useState(false)
   const [activeSection, setActiveSection] = useState('dados')
-  const [patient, setPatient] = useState<{ first_name: string; last_name: string; date_of_birth: string | null } | null>(null)
+  const [patient, setPatient] = useState<Patient | null>(null)
+  const [showPrintModal, setShowPrintModal] = useState(false)
 
   const sections = [
     { id: 'dados', title: 'Dados da Consulta', icon: User },
@@ -73,6 +94,9 @@ export default function PatientForm() {
     return () => observer.disconnect()
   }, [])
 
+  const [previousForm, setPreviousForm] = useState<any | null>(null)
+  const [copySuccess, setCopySuccess] = useState(false)
+
   useEffect(() => {
     const loadData = async () => {
       try {
@@ -81,6 +105,18 @@ export default function PatientForm() {
 
         const patientData = await window.api.getPatient(patientId)
         setPatient(patientData)
+
+        // Fetch patient's previous consultations
+        const formsData = await window.api.getPatientForms(patientId)
+        if (formsData && formsData.length > 0) {
+          const otherForms = isEditing && formId 
+            ? formsData.filter(f => f.id !== parseInt(formId, 10)) 
+            : formsData
+          if (otherForms.length > 0) {
+            const sorted = [...otherForms].sort((a, b) => new Date(b.visit_date).getTime() - new Date(a.visit_date).getTime())
+            setPreviousForm(sorted[0])
+          }
+        }
 
         if (isEditing && formId) {
           const formData = await window.api.getForm(parseInt(formId, 10))
@@ -103,30 +139,105 @@ export default function PatientForm() {
     }
     loadData()
   }, [id, formId, isEditing])
+
+  const handleCopyPreviousForm = () => {
+    if (!previousForm) return
+    setForm(prev => ({
+      ...prev,
+      chief_complaint: previousForm.chief_complaint || '',
+      clinical_prescription: previousForm.clinical_prescription || '',
+      general_observations: previousForm.general_observations || '',
+      procedures_performed: previousForm.procedures_performed || '',
+      foot_specific_history: previousForm.foot_specific_history || '',
+      foot_map_image: previousForm.foot_map_image || '',
+      dermatological_pathologies: previousForm.dermatological_pathologies || '[]'
+    }))
+    setCopySuccess(true)
+    setTimeout(() => setCopySuccess(false), 3500)
+  }
+
+  // Home Care Prescription Templates state
+  const [templates, setTemplates] = useState<HomeCareTemplate[]>(DEFAULT_HOME_CARE_TEMPLATES)
+  const [showManageModal, setShowManageModal] = useState(false)
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null)
+  const [templateTitle, setTemplateTitle] = useState('')
+  const [templateContent, setTemplateContent] = useState('')
+
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Esc key to go back
-      if (e.key === 'Escape') {
-        const tag = document.activeElement?.tagName.toLowerCase()
-        // Only trigger if we aren't actively editing fields, or allow Esc globally
-        if (tag !== 'input' && tag !== 'textarea') {
-          e.preventDefault()
-          navigate(`/patient/${id}`)
+    const loadTemplates = async () => {
+      try {
+        const saved = await window.api.getSetting('home_care_templates')
+        if (saved) {
+          const parsed = JSON.parse(saved)
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setTemplates(parsed)
+          }
         }
-      }
-      // Ctrl+S / Cmd+S to save
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-        e.preventDefault()
-        const dummyFormEvent = {
-          preventDefault: () => {}
-        } as React.FormEvent;
-        handleSubmit(dummyFormEvent);
+      } catch (err) {
+        console.error('Erro ao carregar modelos de prescrição:', err)
       }
     }
+    loadTemplates()
+  }, [])
 
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [form, id, navigate])
+  const handleSaveTemplateList = async (updatedList: HomeCareTemplate[]) => {
+    setTemplates(updatedList)
+    try {
+      await window.api.setSetting('home_care_templates', JSON.stringify(updatedList))
+    } catch (err) {
+      console.error('Erro ao salvar lista de modelos:', err)
+    }
+  }
+
+  const handleSaveSingleTemplate = () => {
+    if (!templateTitle.trim() || !templateContent.trim()) {
+      alert('Por favor, preencha o título e o conteúdo do modelo.')
+      return
+    }
+
+    if (editingTemplateId) {
+      const updated = templates.map(t => t.id === editingTemplateId ? { ...t, title: templateTitle, content: templateContent } : t)
+      handleSaveTemplateList(updated)
+    } else {
+      const newTemplate: HomeCareTemplate = {
+        id: `tpl_${Date.now()}`,
+        title: templateTitle.trim(),
+        content: templateContent.trim()
+      }
+      handleSaveTemplateList([...templates, newTemplate])
+    }
+
+    setEditingTemplateId(null)
+    setTemplateTitle('')
+    setTemplateContent('')
+  }
+
+  const handleEditTemplate = (tpl: HomeCareTemplate) => {
+    setEditingTemplateId(tpl.id)
+    setTemplateTitle(tpl.title)
+    setTemplateContent(tpl.content)
+  }
+
+  const handleDeleteTemplate = (idToDelete: string) => {
+    if (window.confirm('Tem certeza que deseja excluir este modelo?')) {
+      const updated = templates.filter(t => t.id !== idToDelete)
+      handleSaveTemplateList(updated)
+      if (editingTemplateId === idToDelete) {
+        setEditingTemplateId(null)
+        setTemplateTitle('')
+        setTemplateContent('')
+      }
+    }
+  }
+
+  const handleResetTemplates = () => {
+    if (window.confirm('Deseja restaurar os modelos padrão?')) {
+      handleSaveTemplateList(DEFAULT_HOME_CARE_TEMPLATES)
+      setEditingTemplateId(null)
+      setTemplateTitle('')
+      setTemplateContent('')
+    }
+  }
 
   const handleFormChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setForm({ ...form, [e.target.name]: e.target.value })
@@ -145,14 +256,21 @@ export default function PatientForm() {
     }
   }
 
-  const handleAppendTemplate = (templateName: keyof typeof HOME_CARE_TEMPLATES) => {
-    const text = HOME_CARE_TEMPLATES[templateName];
+  const scrollToSection = (sectionId: string) => {
+    const el = document.getElementById(sectionId)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      setActiveSection(sectionId)
+    }
+  }
+
+  const handleAppendTemplate = (text: string) => {
     setForm(prev => ({
       ...prev,
       clinical_prescription: prev.clinical_prescription 
         ? `${prev.clinical_prescription}\n\n${text}` 
         : text
-    }));
+    }))
   }
 
   const validate = () => {
@@ -192,14 +310,6 @@ export default function PatientForm() {
 
   }
 
-  const scrollToSection = (sectionId: string) => {
-    const el = document.getElementById(sectionId)
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      setActiveSection(sectionId)
-    }
-  }
-
   return (
     <div>
       <div className="glass-card" style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
@@ -217,9 +327,22 @@ export default function PatientForm() {
             )}
           </h2>
         </div>
-        <button type="button" className="btn btn-secondary" onClick={() => navigate(`/patient/${id}`)}>
-          <X size={18} /> Cancelar
-        </button>
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+          {patient && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setShowPrintModal(true)}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--accent-color)', borderColor: 'var(--accent-color)' }}
+              title="Imprimir ou salvar Ficha / Cuidados em PDF"
+            >
+              <Printer size={16} /> Imprimir / PDF
+            </button>
+          )}
+          <button type="button" className="btn btn-secondary" onClick={() => navigate(`/patient/${id}`)}>
+            <X size={18} /> Cancelar
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -256,6 +379,88 @@ export default function PatientForm() {
           animation: 'pageFadeInUp 0.3s ease-out'
         }}>
           Consulta salva com sucesso.
+        </div>,
+        document.body
+      )}
+
+      {/* 1-Click Copy Previous Visit Banner */}
+      {!isEditing && previousForm && (
+        <div style={{
+          marginBottom: '1.5rem',
+          padding: '1rem 1.25rem',
+          background: 'linear-gradient(135deg, rgba(14, 145, 168, 0.08) 0%, rgba(16, 185, 129, 0.08) 100%)',
+          border: '1px solid rgba(14, 145, 168, 0.25)',
+          borderRadius: '12px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '1rem',
+          flexWrap: 'wrap',
+          boxShadow: '0 4px 15px rgba(0,0,0,0.02)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+            <div style={{
+              background: 'var(--accent-color)',
+              color: 'white',
+              width: '38px',
+              height: '38px',
+              borderRadius: '10px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0
+            }}>
+              <History size={20} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: '0.92rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                Consulta Anterior Encontrada
+                <span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: 'var(--text-secondary)', background: 'white', padding: '0.15rem 0.6rem', borderRadius: '12px', border: '1px solid var(--surface-border)' }}>
+                  {new Date(previousForm.visit_date).toLocaleDateString()}
+                </span>
+              </div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
+                Copie os procedimentos, histórico, prescrições e anotações do mapa do pé da última visita para agilizar o atendimento.
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={handleCopyPreviousForm}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.45rem',
+              whiteSpace: 'nowrap',
+              boxShadow: '0 4px 12px rgba(14, 145, 168, 0.25)'
+            }}
+          >
+            <Copy size={16} /> Copiar da Consulta Anterior
+          </button>
+        </div>
+      )}
+
+      {/* Copy Success Toast */}
+      {copySuccess && createPortal(
+        <div style={{ 
+          position: 'fixed',
+          bottom: '2rem',
+          right: '2rem',
+          padding: '1rem 1.5rem', 
+          backgroundColor: 'var(--accent-color)', 
+          border: '1px solid rgba(255,255,255,0.3)', 
+          borderRadius: '12px',
+          color: 'white',
+          boxShadow: '0 10px 25px rgba(14, 145, 168, 0.3)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.75rem',
+          zIndex: 9999,
+          animation: 'pageFadeInUp 0.3s ease-out'
+        }}>
+          <Sparkles size={18} /> Dados e mapa do pé copiados da consulta de {new Date(previousForm.visit_date).toLocaleDateString()}!
         </div>,
         document.body
       )}
@@ -366,27 +571,50 @@ export default function PatientForm() {
               </div>
               <div className="grid-2">
                 <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Prescrição clínica / Home Care</label>
-                  <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-                    {Object.keys(HOME_CARE_TEMPLATES).map(templateName => (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <label className="form-label" style={{ margin: 0 }}>Prescrição clínica / Home Care</label>
+                    <button
+                      type="button"
+                      onClick={() => setShowManageModal(true)}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: 'var(--accent-color)',
+                        fontSize: '0.78rem',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.3rem'
+                      }}
+                    >
+                      <Settings size={13} /> Gerenciar Modelos
+                    </button>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+                    {templates.map(tpl => (
                       <button
-                        key={templateName}
+                        key={tpl.id}
                         type="button"
-                        onClick={() => handleAppendTemplate(templateName as keyof typeof HOME_CARE_TEMPLATES)}
+                        onClick={() => handleAppendTemplate(tpl.content)}
                         style={{
-                          background: 'rgba(255,255,255,0.05)',
-                          border: '1px solid var(--surface-border)',
-                          color: 'var(--text-secondary)',
-                          fontSize: '0.75rem',
-                          padding: '0.2rem 0.5rem',
-                          borderRadius: '4px',
+                          background: 'rgba(14, 145, 168, 0.08)',
+                          border: '1px solid rgba(14, 145, 168, 0.2)',
+                          color: 'var(--accent-color)',
+                          fontSize: '0.78rem',
+                          fontWeight: 500,
+                          padding: '0.25rem 0.6rem',
+                          borderRadius: '6px',
                           cursor: 'pointer',
-                          transition: 'all 0.2s ease'
+                          transition: 'all 0.15s ease',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.3rem'
                         }}
-                        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = 'var(--text-primary)' }}
-                        onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; e.currentTarget.style.color = 'var(--text-secondary)' }}
+                        title={`Inserir modelo: ${tpl.title}`}
                       >
-                        + {templateName}
+                        + {tpl.title}
                       </button>
                     ))}
                   </div>
@@ -411,6 +639,183 @@ export default function PatientForm() {
           </form>
         </div>
       </div>
+
+      {/* Interactive Prescription Template Manager Modal */}
+      {showManageModal && createPortal(
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+          backdropFilter: 'blur(5px)'
+        }}>
+          <div className="glass-card" style={{ width: '620px', maxWidth: '92vw', background: 'white', maxHeight: '90vh', overflowY: 'auto', padding: '1.75rem', animation: 'pageFadeInUp 0.25s ease-out' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', borderBottom: '1px solid var(--surface-border)', paddingBottom: '0.75rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                <Settings size={20} color="var(--accent-color)" />
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                  Gerenciar Modelos de Prescrição (Home Care)
+                </h3>
+              </div>
+              <button className="modal-close-btn" onClick={() => { setShowManageModal(false); setEditingTemplateId(null); setTemplateTitle(''); setTemplateContent(''); }}>
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Existing Templates List */}
+            <div style={{ marginBottom: '1.25rem' }}>
+              <h4 style={{ fontSize: '0.88rem', color: 'var(--text-primary)', margin: '0 0 0.75rem 0', fontWeight: 600 }}>
+                Modelos Salvos ({templates.length})
+              </h4>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', maxHeight: '220px', overflowY: 'auto', paddingRight: '0.2rem' }}>
+                {templates.map(tpl => (
+                  <div
+                    key={tpl.id}
+                    style={{
+                      background: '#fcfdfe',
+                      border: '1px solid var(--surface-border)',
+                      borderRadius: '8px',
+                      padding: '0.75rem 0.85rem',
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      justifyContent: 'space-between',
+                      gap: '0.75rem'
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: '0.86rem', color: 'var(--text-primary)', marginBottom: '0.2rem' }}>
+                        {tpl.title}
+                      </div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', whiteSpace: 'pre-line', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                        {tpl.content}
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '0.35rem', flexShrink: 0 }}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => handleEditTemplate(tpl)}
+                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
+                        title="Editar modelo"
+                      >
+                        <Edit2 size={13} /> Editar
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => handleDeleteTemplate(tpl.id)}
+                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', color: 'var(--danger-color)', borderColor: 'var(--danger-color)' }}
+                        title="Excluir modelo"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Create / Edit Form */}
+            <div style={{ background: 'rgba(14, 145, 168, 0.04)', padding: '1rem', borderRadius: '10px', border: '1px solid var(--surface-border)', marginBottom: '1.25rem' }}>
+              <h4 style={{ fontSize: '0.86rem', fontWeight: 600, color: 'var(--accent-color)', margin: '0 0 0.75rem 0', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                {editingTemplateId ? <Edit2 size={15} /> : <Plus size={15} />}
+                {editingTemplateId ? 'Editar Modelo Selecionado' : 'Criar Novo Modelo de Prescrição'}
+              </h4>
+
+              <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+                <label className="form-label" style={{ fontSize: '0.78rem' }}>Título do Modelo (ex: Tratamento Fissuras)</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="Ex: Recomendações Onicomicose"
+                  value={templateTitle}
+                  onChange={(e) => setTemplateTitle(e.target.value)}
+                  style={{ fontSize: '0.85rem' }}
+                />
+              </div>
+
+              <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+                <label className="form-label" style={{ fontSize: '0.78rem' }}>Conteúdo da Orientação / Prescrição</label>
+                <textarea
+                  className="form-control"
+                  rows={4}
+                  placeholder="Insira as orientações detalhadas de Home Care para o paciente..."
+                  value={templateContent}
+                  onChange={(e) => setTemplateContent(e.target.value)}
+                  style={{ fontSize: '0.82rem', fontFamily: 'inherit' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                {editingTemplateId && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => { setEditingTemplateId(null); setTemplateTitle(''); setTemplateContent(''); }}
+                    style={{ fontSize: '0.8rem', padding: '0.35rem 0.75rem' }}
+                  >
+                    Cancelar Edição
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleSaveSingleTemplate}
+                  style={{ fontSize: '0.8rem', padding: '0.35rem 0.85rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                >
+                  <Save size={14} /> {editingTemplateId ? 'Atualizar Modelo' : 'Adicionar Modelo'}
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--surface-border)', paddingTop: '0.85rem' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={handleResetTemplates}
+                style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+              >
+                <RotateCcw size={13} /> Restaurar Padrões
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => { setShowManageModal(false); setEditingTemplateId(null); setTemplateTitle(''); setTemplateContent(''); }}
+                style={{ fontSize: '0.85rem' }}
+              >
+                Concluir
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Print Document Modal */}
+      {showPrintModal && patient && createPortal(
+        <PrintDocumentModal
+          patient={patient}
+          currentForm={{
+            id: formId ? parseInt(formId, 10) : 0,
+            patient_id: parseInt(id || '0', 10),
+            visit_date: form.visit_date,
+            chief_complaint: form.chief_complaint,
+            foot_specific_history: form.foot_specific_history,
+            foot_map_image: form.foot_map_image,
+            dermatological_pathologies: form.dermatological_pathologies,
+            clinical_prescription: form.clinical_prescription,
+            general_observations: form.general_observations,
+            procedures_performed: form.procedures_performed,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }}
+          defaultDocType="consultation"
+          onClose={() => setShowPrintModal(false)}
+        />,
+        document.body
+      )}
     </div>
   )
 }

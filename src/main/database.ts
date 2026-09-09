@@ -81,6 +81,9 @@ export function initDatabase() {
       end_time DATETIME NOT NULL,
       notes TEXT,
       google_event_id TEXT,
+      status TEXT DEFAULT 'SCHEDULED',
+      service_type TEXT,
+      price REAL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(patient_id) REFERENCES patients(id) ON DELETE SET NULL
@@ -113,6 +116,24 @@ export function initDatabase() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(patient_id) REFERENCES patients(id) ON DELETE SET NULL
     );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      salt TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'admin',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      actor TEXT NOT NULL,
+      action TEXT NOT NULL,
+      target TEXT,
+      details TEXT,
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `)
 
   // Migration: add new columns if they don't exist
@@ -129,7 +150,10 @@ export function initDatabase() {
     "ALTER TABLE podiatry_history_forms ADD COLUMN clinical_prescription TEXT;",
     "ALTER TABLE podiatry_history_forms ADD COLUMN general_observations TEXT;",
     "ALTER TABLE patients ADD COLUMN nail_shape TEXT;",
-    "ALTER TABLE podiatry_history_forms ADD COLUMN procedures_performed TEXT;"
+    "ALTER TABLE podiatry_history_forms ADD COLUMN procedures_performed TEXT;",
+    "ALTER TABLE appointments ADD COLUMN status TEXT DEFAULT 'SCHEDULED';",
+    "ALTER TABLE appointments ADD COLUMN service_type TEXT;",
+    "ALTER TABLE appointments ADD COLUMN price REAL;"
   ]
 
   for (const stmt of alterStatements) {
@@ -363,10 +387,20 @@ export function getAllAppointments(): Appointment[] {
 
 export function createAppointment(payload: CreateAppointmentPayload): number {
   const stmt = db.prepare(`
-    INSERT INTO appointments (patient_id, title, start_time, end_time, notes, google_event_id)
-    VALUES (@patient_id, @title, @start_time, @end_time, @notes, @google_event_id)
+    INSERT INTO appointments (patient_id, title, start_time, end_time, notes, google_event_id, status, service_type, price)
+    VALUES (@patient_id, @title, @start_time, @end_time, @notes, @google_event_id, @status, @service_type, @price)
   `)
-  const info = stmt.run(payload)
+  const info = stmt.run({
+    patient_id: payload.patient_id ?? null,
+    title: payload.title,
+    start_time: payload.start_time,
+    end_time: payload.end_time,
+    notes: payload.notes ?? null,
+    google_event_id: payload.google_event_id ?? null,
+    status: payload.status ?? 'SCHEDULED',
+    service_type: payload.service_type ?? null,
+    price: payload.price ?? null
+  })
   return info.lastInsertRowid as number
 }
 
@@ -531,4 +565,10 @@ export function getFinancialSummary(startDate: string, endDate: string): Financi
     totalExpense,
     netBalance: totalIncome - totalExpense
   }
+}
+
+export function runQuery(sql: string, params: any[] = []): void {
+  if (!db) return
+  const stmt = db.prepare(sql)
+  stmt.run(...params)
 }

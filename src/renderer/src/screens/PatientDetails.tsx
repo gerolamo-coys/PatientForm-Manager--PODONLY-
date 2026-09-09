@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import { Save, X, User, Activity, AlertCircle, Plus, Calendar, Clock, Image as ImageIcon, Trash2, Search } from 'lucide-react'
+import { Save, X, User, Activity, AlertCircle, Plus, Calendar, Clock, Image as ImageIcon, Trash2, Search, Maximize2, Upload, Split, Printer } from 'lucide-react'
 import { Patient, PodiatryHistoryForm, PatientImage } from '../../../shared/types'
 import { calculateAge } from '../utils/ageHelper'
+import BeforeAfterComparator from '../components/BeforeAfterComparator'
+import PrintDocumentModal from '../components/PrintDocumentModal'
 
 export default function PatientDetails() {
   const { id } = useParams<{ id: string }>()
@@ -35,6 +37,19 @@ export default function PatientDetails() {
   const [saveSuccess, setSaveSuccess] = useState(false)
   const [createdSuccess, setCreatedSuccess] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+
+  // Before & After Comparison state
+  const [showComparisonModal, setShowComparisonModal] = useState(false)
+  const [beforeImageId, setBeforeImageId] = useState<number | null>(null)
+  const [afterImageId, setAfterImageId] = useState<number | null>(null)
+  const [showPrintModal, setShowPrintModal] = useState(false)
+
+  const handleOpenComparison = () => {
+    if (images.length < 2) return
+    setBeforeImageId(images[0].id)
+    setAfterImageId(images[images.length - 1].id)
+    setShowComparisonModal(true)
+  }
 
   useEffect(() => {
     window.scrollTo(0, 0)
@@ -201,9 +216,22 @@ export default function PatientDetails() {
             {isEditing ? 'Prontuário do Paciente' : 'Novo Paciente'}
           </h2>
         </div>
-        <button type="button" className="btn btn-secondary" onClick={() => navigate('/patients')}>
-          <X size={18} /> Voltar
-        </button>
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+          {isEditing && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setShowPrintModal(true)}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--accent-color)', borderColor: 'var(--accent-color)' }}
+              title="Imprimir ou exportar Prontuário em PDF"
+            >
+              <Printer size={16} /> Imprimir / PDF
+            </button>
+          )}
+          <button type="button" className="btn btn-secondary" onClick={() => navigate('/patients')}>
+            <X size={18} /> Voltar
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -469,58 +497,182 @@ export default function PatientDetails() {
       )}
 
       {isEditing && (
-        <div style={{ marginTop: '3rem', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '2rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-            <h3 className="section-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <ImageIcon color="var(--accent-color)" size={20} /> Galeria de Fotos
-            </h3>
-            <button type="button" className="btn btn-primary" onClick={handleAddImage}>
-              <Plus size={18} /> Adicionar Foto
-            </button>
+        <div style={{ marginTop: '3rem', borderTop: '1px solid var(--surface-border)', paddingTop: '2rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+            <div>
+              <h3 className="section-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <ImageIcon color="var(--accent-color)" size={20} /> Galeria de Fotos do Tratamento
+              </h3>
+              <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                Anexe fotos dos pés e acompanhe a evolução dos procedimentos clínicos.
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+              {images.length >= 2 && (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={handleOpenComparison}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--accent-color)', borderColor: 'var(--accent-color)' }}
+                >
+                  <Split size={16} /> Comparar Fotos (Antes / Depois)
+                </button>
+              )}
+              <button type="button" className="btn btn-primary" onClick={handleAddImage} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <Plus size={18} /> Adicionar Foto
+              </button>
+            </div>
           </div>
 
           {images.length > 0 ? (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '1rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '1.25rem' }}>
               {images.map(img => (
-                <div key={img.id} className="glass-card" style={{ padding: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  {img.base64 ? (
-                    <img 
-                      src={img.base64} 
-                      alt={img.description || 'Foto'} 
-                      onClick={() => { setFullscreenImage(img.base64); setZoom(1); }}
-                      style={{ width: '100%', height: '200px', objectFit: 'cover', borderRadius: '4px', cursor: 'zoom-in', transition: 'transform 0.2s ease' }} 
-                      onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.02)'}
-                      onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
-                    />
-                  ) : (
-                    <div style={{ width: '100%', height: '200px', backgroundColor: 'rgba(0,0,0,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      Imagem não encontrada
-                    </div>
-                  )}
-                  <input 
-                    type="text" 
-                    className="form-control" 
-                    placeholder="Descrição (ex: Antes do tratamento)" 
-                    value={img.description || ''} 
-                    onChange={(e) => setImages(images.map(i => i.id === img.id ? { ...i, description: e.target.value } : i))}
-                    onBlur={(e) => handleUpdateDescription(img.id, e.target.value)}
-                    style={{ fontSize: '0.9rem', padding: '0.4rem' }}
-                  />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem' }}>
-                    <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                      Data: {new Date(img.created_at).toLocaleDateString()}
-                    </span>
-                    <button type="button" onClick={() => handleDeleteImage(img.id, img.file_name)} style={{ background: 'none', border: 'none', color: 'var(--danger-color)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
-                      <Trash2 size={16} />
+                <div
+                  key={img.id}
+                  className="glass-card"
+                  style={{
+                    padding: 0,
+                    overflow: 'hidden',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    borderRadius: '12px',
+                    border: '1px solid var(--surface-border)',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.03)',
+                    transition: 'transform 0.2s ease, box-shadow 0.2s ease'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = 'translateY(-2px)'
+                    e.currentTarget.style.boxShadow = '0 8px 20px rgba(0,0,0,0.06)'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = 'translateY(0)'
+                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.03)'
+                  }}
+                >
+                  {/* Photo Thumbnail Container */}
+                  <div style={{ position: 'relative', width: '100%', height: '210px', overflow: 'hidden', background: '#f1f5f9' }}>
+                    {img.base64 ? (
+                      <img 
+                        src={img.base64} 
+                        alt={img.description || 'Foto do tratamento'} 
+                        onClick={() => { setFullscreenImage(img.base64); setZoom(1); }}
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'cover',
+                          cursor: 'zoom-in',
+                          transition: 'transform 0.3s ease'
+                        }} 
+                        onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.04)'}
+                        onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                      />
+                    ) : (
+                      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                        Imagem não disponível
+                      </div>
+                    )}
+
+                    {/* Top Floating Delete Action */}
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteImage(img.id, img.file_name)}
+                      title="Excluir foto"
+                      style={{
+                        position: 'absolute',
+                        top: '0.6rem',
+                        right: '0.6rem',
+                        background: 'rgba(255, 255, 255, 0.9)',
+                        backdropFilter: 'blur(4px)',
+                        border: '1px solid rgba(239, 68, 68, 0.3)',
+                        borderRadius: '50%',
+                        width: '32px',
+                        height: '32px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: 'var(--danger-color)',
+                        cursor: 'pointer',
+                        boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
+                        transition: 'all 0.15s ease'
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = '#ef4444'; e.currentTarget.style.color = 'white'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.9)'; e.currentTarget.style.color = 'var(--danger-color)'; }}
+                    >
+                      <Trash2 size={15} />
                     </button>
+
+                    {/* Top Floating Zoom Action */}
+                    {img.base64 && (
+                      <button
+                        type="button"
+                        onClick={() => { setFullscreenImage(img.base64); setZoom(1); }}
+                        title="Ampliar imagem"
+                        style={{
+                          position: 'absolute',
+                          bottom: '0.6rem',
+                          right: '0.6rem',
+                          background: 'rgba(0, 0, 0, 0.65)',
+                          backdropFilter: 'blur(4px)',
+                          border: 'none',
+                          borderRadius: '6px',
+                          padding: '0.25rem 0.5rem',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.25rem',
+                          color: 'white',
+                          fontSize: '0.72rem',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <Maximize2 size={12} /> Ampliar
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Clean Description Input */}
+                  <div style={{ padding: '0.75rem', background: '#ffffff' }}>
+                    <input 
+                      type="text" 
+                      className="form-control" 
+                      placeholder="Descrição da foto (ex: Antes do tratamento)..." 
+                      value={img.description || ''} 
+                      onChange={(e) => setImages(images.map(i => i.id === img.id ? { ...i, description: e.target.value } : i))}
+                      onBlur={(e) => handleUpdateDescription(img.id, e.target.value)}
+                      style={{
+                        fontSize: '0.85rem',
+                        padding: '0.45rem 0.65rem',
+                        borderRadius: '6px',
+                        border: '1px solid var(--surface-border)',
+                        width: '100%',
+                        background: '#f8fafc'
+                      }}
+                    />
                   </div>
                 </div>
               ))}
             </div>
           ) : (
-            <div className="empty-state" style={{ padding: '2rem' }}>
-              <ImageIcon size={32} style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }} />
-              <p>Nenhuma foto importada para este paciente.</p>
+            <div
+              onClick={handleAddImage}
+              style={{
+                padding: '3rem 2rem',
+                textAlign: 'center',
+                border: '2px dashed var(--surface-border)',
+                borderRadius: '12px',
+                background: 'rgba(241, 245, 249, 0.4)',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease'
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent-color)'; e.currentTarget.style.background = 'rgba(14, 145, 168, 0.04)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--surface-border)'; e.currentTarget.style.background = 'rgba(241, 245, 249, 0.4)'; }}
+            >
+              <Upload size={36} style={{ marginBottom: '0.75rem', color: 'var(--accent-color)' }} />
+              <h4 style={{ margin: '0 0 0.35rem 0', fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                Nenhuma foto importada ainda
+              </h4>
+              <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                Clique aqui para selecionar e anexar fotos do tratamento do paciente.
+              </p>
             </div>
           )}
         </div>
@@ -582,6 +734,29 @@ export default function PatientDetails() {
              <button onClick={() => setFullscreenImage(null)} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', fontSize: '1.2rem', padding: '0 0.5rem' }}>&times;</button>
           </div>
         </>,
+        document.body
+      )}
+
+      {/* Interactive Before & After Photo Comparison Modal */}
+      {showComparisonModal && createPortal(
+        <BeforeAfterComparator
+          images={images}
+          initialBeforeId={beforeImageId}
+          initialAfterId={afterImageId}
+          patientName={`${patient.first_name} ${patient.last_name}`.trim()}
+          onClose={() => setShowComparisonModal(false)}
+        />,
+        document.body
+      )}
+
+      {/* Print Document Modal */}
+      {showPrintModal && createPortal(
+        <PrintDocumentModal
+          patient={{ ...patient, id: Number(id) } as Patient}
+          forms={forms}
+          defaultDocType="full_record"
+          onClose={() => setShowPrintModal(false)}
+        />,
         document.body
       )}
 

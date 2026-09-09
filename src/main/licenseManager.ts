@@ -3,7 +3,11 @@ import { getSetting, setSetting } from './database'
 
 const SUPABASE_URL = 'https://nqydiepmxvzbaofuctma.supabase.co'
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5xeWRpZXBteHZ6YmFvZnVjdG1hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2Njc3NjUsImV4cCI6MjA5NjI0Mzc2NX0.2GwsBbKemE5Er9LiP7Bjy4LbaFX6xBbXPcgy7TggsbI'
-const ASAAS_API_KEY = import.meta.env.MAIN_VITE_ASAAS_API_KEY || ''
+const STRIPE_API_KEY = import.meta.env.MAIN_VITE_STRIPE_API_KEY || ''
+import Stripe from 'stripe'
+const stripe = new Stripe(STRIPE_API_KEY || 'sk_test_dummy', { apiVersion: '2026-07-29.dahlia' as any })
+
+
 
 export async function validateLicense(key: string): Promise<{ valid: boolean; error?: string }> {
   try {
@@ -151,62 +155,79 @@ export function revokeLicenseLocal() {
   setSetting('license_offline_valid_until', '')
 }
 
+
+/**
+ * Retrieve subscription details for the current license.
+ * Returns a success flag and the license/subscription data.
+ */
 export async function getSubscriptionDetails(): Promise<any> {
   const key = getSetting('license_key')
   if (!key) {
-    return { success: false, error: 'Nenhuma chave de licença encontrada localmente.' }
+    return { success: false, error: 'Nenhuma licença encontrada' }
   }
-
   try {
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/get_asaas_subscription_details`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': SUPABASE_KEY,
-        'Authorization': `Bearer ${SUPABASE_KEY}`
-      },
-      body: JSON.stringify({ p_license_key: key, p_asaas_api_key: ASAAS_API_KEY })
+    // Fetch license row from Supabase
+    const resp = await fetch(`${SUPABASE_URL}/rest/v1/licenses?license_key=eq.${encodeURIComponent(key)}&select=stripe_subscription_id,stripe_customer_id,status,expires_at,license_key`, {
+      method: 'GET',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` },
     })
-
-    if (!response.ok) {
-      console.error('get_asaas_subscription_details HTTP error', response.status)
-      return { success: false, error: 'Erro de comunicação com o servidor Supabase.' }
+    if (!resp.ok) throw new Error('Supabase request falhou')
+    const data = await resp.json()
+    if (!Array.isArray(data) || data.length === 0) {
+      return { success: false, error: 'Licença não encontrada no Supabase' }
     }
-
-    const data = await response.json()
-    return data
-  } catch (error: any) {
-    console.error('Error fetching subscription details:', error)
-    return { success: false, error: 'Falha ao buscar dados da assinatura.' }
+    const lic = data[0]
+    // Optionally pull full Stripe subscription details
+    let stripeSub: any = null
+    if (lic.stripe_subscription_id) {
+      try {
+        stripeSub = await stripe.subscriptions.retrieve(lic.stripe_subscription_id)
+      } catch (e) {
+        console.warn('Não foi possível obter detalhes da assinatura Stripe', e)
+      }
+    }
+    return { success: true, data: { ...lic, stripeSub } }
+  } catch (e: any) {
+    console.error('Erro ao obter detalhes da assinatura', e)
+    return { success: false, error: e.message }
   }
 }
 
+/**
+ * Cancel the Stripe subscription linked to the current license.
+ */
 export async function cancelSubscription(): Promise<{ success: boolean; error?: string }> {
   const key = getSetting('license_key')
   if (!key) {
-    return { success: false, error: 'Nenhuma chave de licença encontrada localmente.' }
+    return { success: false, error: 'Nenhuma licença encontrada' }
   }
-
   try {
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/cancel_asaas_subscription`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': SUPABASE_KEY,
-        'Authorization': `Bearer ${SUPABASE_KEY}`
-      },
-      body: JSON.stringify({ p_license_key: key, p_asaas_api_key: ASAAS_API_KEY })
+    // Get subscription id from Supabase
+    const resp = await fetch(`${SUPABASE_URL}/rest/v1/licenses?license_key=eq.${encodeURIComponent(key)}&select=stripe_subscription_id`, {
+      method: 'GET',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` },
     })
-
-    if (!response.ok) {
-      console.error('cancel_asaas_subscription HTTP error', response.status)
-      return { success: false, error: 'Erro de comunicação com o servidor Supabase.' }
+    if (!resp.ok) throw new Error('Supabase request falhou')
+    const rows = await resp.json()
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return { success: false, error: 'Licença não encontrada' }
     }
-
-    const data = await response.json()
-    return data
-  } catch (error: any) {
-    console.error('Error cancelling subscription:', error)
-    return { success: false, error: 'Falha ao cancelar a assinatura.' }
+    const subscriptionId = rows[0].stripe_subscription_id
+    if (!subscriptionId) {
+      return { success: false, error: 'Assinatura não associada à licença' }
+    }
+    // Cancel via Stripe API
+    await stripe.subscriptions.cancel(subscriptionId)
+    // Mark as canceled in Supabase (PATCH request)
+    await fetch(`${SUPABASE_URL}/rest/v1/licenses?stripe_subscription_id=eq.${encodeURIComponent(subscriptionId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` },
+      body: JSON.stringify({ status: 'canceled' }),
+    })
+    return { success: true }
+  } catch (e: any) {
+    console.error('Erro ao cancelar assinatura', e)
+    return { success: false, error: e.message }
   }
 }
+

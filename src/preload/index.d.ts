@@ -18,7 +18,8 @@ import {
   FinancialTransaction,
   CreateTransactionPayload,
   UpdateTransactionPayload,
-  FinancialSummary
+  FinancialSummary,
+  GoogleSyncResult
 } from '../shared/types'
 
 export interface IAPI {
@@ -42,8 +43,14 @@ export interface IAPI {
   updateAppointment: (id: number, payload: UpdateAppointmentPayload) => Promise<void>
   deleteAppointment: (id: number) => Promise<void>
 
+  isGoogleConnected: () => Promise<boolean>
+  getGoogleStatus: () => Promise<{ isConnected: boolean; isConfigured: boolean; email: string | null }>
+  disconnectGoogle: () => Promise<boolean>
+  cancelGoogleAuth: () => Promise<boolean>
   authenticateGoogle: () => Promise<boolean>
-  pullFromGoogleCalendar: () => Promise<{ success: boolean; error?: string }>
+  pullFromGoogleCalendar: () => Promise<GoogleSyncResult>
+  importGoogleCredentialsFile: () => Promise<{ success: boolean; clientId?: string; clientSecret?: string; error?: string } | null>
+  sendSingleAppointmentReminder: (appointmentId: number) => Promise<{ success: boolean; error?: string }>
   getSetting: (key: string) => Promise<string | null>
   setSetting: (key: string, value: string) => Promise<void>
   getWhatsappStatus: () => Promise<{ status: 'DISCONNECTED' | 'CONNECTING' | 'QR_READY' | 'CONNECTED'; qrDataUri: string }>
@@ -61,6 +68,9 @@ export interface IAPI {
   pickAndSaveClinicLogo: () => Promise<string | null>
   getClinicLogoBase64: () => Promise<string | null>
   deleteClinicLogo: () => Promise<boolean>
+  pickAndSaveCustomFeetMap: () => Promise<string | null>
+  getCustomFeetMapBase64: () => Promise<string | null>
+  deleteCustomFeetMap: () => Promise<boolean>
   validateLicense: (key: string) => Promise<{ valid: boolean; error?: string }>
   checkLicenseStatus: () => Promise<{ valid: boolean; error?: string }>
   getSubscriptionDetails: () => Promise<any>
@@ -73,6 +83,21 @@ export interface IAPI {
   getTransactions: (startDate: string, endDate: string) => Promise<FinancialTransaction[]>
   getFinancialSummary: (startDate: string, endDate: string) => Promise<FinancialSummary>
   
+  // Auth & Security
+  hasAdminUser: () => Promise<boolean>
+  setupAdminPassword: (password: string) => Promise<boolean>
+  unlockSession: (password: string) => Promise<boolean>
+  lockSession: () => Promise<boolean>
+  isSessionLocked: () => Promise<boolean>
+  activityPing: () => Promise<boolean>
+  onSessionLocked: (callback: () => void) => () => void
+  exportEncryptedBackup: (password: string) => Promise<boolean>
+  getAuditLogs: () => Promise<any[]>
+
+  // PDF Export & Print
+  exportHtmlToPdf: (htmlContent: string, defaultFileName: string) => Promise<{ success: boolean; filePath?: string; canceled?: boolean; error?: string }>
+  printHtml: (htmlContent: string) => Promise<{ success: boolean; error?: string }>
+
   onWhatsappStatus: (callback: (data: { status: 'DISCONNECTED' | 'CONNECTING' | 'QR_READY' | 'CONNECTED'; qrDataUri: string }) => void) => () => void
 }
 

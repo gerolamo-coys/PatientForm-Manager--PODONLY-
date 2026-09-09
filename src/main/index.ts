@@ -14,7 +14,7 @@ import icon from '../../resources/icon.png?asset'
 import { initDatabase } from './database'
 import { registerIpcHandlers } from './ipc'
 import { initWhatsappService } from './whatsappService'
-
+import { startInactivityMonitor } from './authService'
 function createWindow(): void {
   // Configuração inicial da janela do aplicativo com isolamento de contexto e sandbox ativados
   const mainWindow = new BrowserWindow({
@@ -52,16 +52,19 @@ function createWindow(): void {
 
   // Abertura segura de links externos no navegador padrão do sistema operacional
   mainWindow.webContents.setWindowOpenHandler((details) => {
+    const allowedDomains = ['accounts.google.com', 'www.googleapis.com', 'wa.me', 'api.whatsapp.com']
     try {
-      const parsedUrl = new URL(details.url)
-      if (parsedUrl.protocol === 'https:' || parsedUrl.protocol === 'http:') {
+      const urlObj = new URL(details.url)
+      if (urlObj.protocol === 'https:' && allowedDomains.includes(urlObj.hostname)) {
         shell.openExternal(details.url)
       }
-    } catch {
-      // URL inválida ou protocolo perigoso (ex: file:, javascript:)
+    } catch (e) {
+      console.error('Invalid URL attempt blocked:', details.url)
     }
     return { action: 'deny' }
   })
+
+  startInactivityMonitor(mainWindow)
 
   // HMR para desenvolvimento ou carrega arquivo local em produção
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {

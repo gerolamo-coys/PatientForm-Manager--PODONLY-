@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Search, Plus, Calendar, Clock, User, Trash2, CheckSquare } from 'lucide-react'
+import { Search, Plus, Calendar, Clock, User, Trash2, CheckSquare, Users } from 'lucide-react'
 import { PatientListItem, SortMode } from '../../../shared/types'
 import { calculateAge, formatDateOfBirth } from '../utils/ageHelper'
 
@@ -66,6 +66,9 @@ export default function PatientList() {
   return (
     <div className="glass-card">
       <div className="list-header">
+        <h2 className="section-title" style={{ border: 'none', margin: 0, padding: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Users size={24} /> Lista de Pacientes
+        </h2>
         <div className="search-bar">
           <div style={{ position: 'relative', flex: 1 }}>
             <Search 

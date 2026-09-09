@@ -1,4 +1,4 @@
-import { ipcMain, app, dialog, shell } from 'electron'
+import { ipcMain, app, dialog, shell, BrowserWindow } from 'electron'
 import path from 'path'
 import fs from 'fs/promises'
 import { createWriteStream, existsSync } from 'fs'
@@ -34,16 +34,21 @@ import {
   getFinancialSummary,
   getDb
 } from './database'
-import { authenticateGoogle } from './googleAuth'
+import { authenticateGoogle, parseCredentialsJson, hasGoogleCredentials, cancelGoogleAuthentication } from './googleAuth'
 import { pullFromGoogleCalendar, createGoogleEvent, updateGoogleEvent, deleteGoogleEvent } from './googleCalendar'
+import { loadGoogleTokens, deleteGoogleTokens } from './secretStorage'
 import {
   startWhatsapp,
   logoutWhatsapp,
   getWhatsappStatus,
-  sendTestWhatsappMessage
+  sendTestWhatsappMessage,
+  sendSingleAppointmentReminder
 } from './whatsappService'
 import { validateLicense, checkLicenseStatus, getSubscriptionDetails, cancelSubscription } from './licenseManager'
-
+import { hasAdminUser, setupAdmin, unlockSession, lockSession, isSessionLocked, resetInactivityTimer } from './authService'
+import { exportEncryptedBackup } from './backupEngine'
+import { getAuditLogs } from './auditService'
+import archiverModule from 'archiver'
 import type {
   SortMode,
   CreatePatientWithFormPayload,
@@ -196,12 +201,71 @@ export function registerIpcHandlers() {
     deleteAppointment(id)
   })
 
+  ipcMain.handle('isGoogleConnected', async () => {
+    const tokens = loadGoogleTokens()
+    return Boolean(tokens && (tokens.access_token || tokens.refresh_token))
+  })
+
+  ipcMain.handle('getGoogleStatus', async () => {
+    const tokens = loadGoogleTokens()
+    const isConnected = Boolean(tokens && (tokens.access_token || tokens.refresh_token))
+    const isConfigured = hasGoogleCredentials()
+    const email = getSetting('google_account_email') || null
+    return {
+      isConnected,
+      isConfigured,
+      email
+    }
+  })
+
+  ipcMain.handle('disconnectGoogle', async () => {
+    deleteGoogleTokens()
+    setSetting('google_auth_tokens', '')
+    setSetting('google_account_email', '')
+    return true
+  })
+
+  ipcMain.handle('cancelGoogleAuth', async () => {
+    cancelGoogleAuthentication()
+    return true
+  })
+
   ipcMain.handle('authenticateGoogle', async () => {
     return authenticateGoogle()
   })
 
   ipcMain.handle('pullFromGoogleCalendar', async () => {
     return await pullFromGoogleCalendar()
+  })
+
+  ipcMain.handle('importGoogleCredentialsFile', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [{ name: 'JSON Credentials', extensions: ['json'] }]
+    })
+    if (canceled || filePaths.length === 0) return null
+
+    try {
+      const content = await fs.readFile(filePaths[0], 'utf-8')
+      const parsed = parseCredentialsJson(content)
+      if (!parsed) {
+        return { success: false, error: 'Arquivo JSON inválido. Certifique-se de usar o arquivo baixado do Google Cloud Console.' }
+      }
+      setSetting('google_client_id', parsed.clientId)
+      setSetting('google_client_secret', parsed.clientSecret)
+      if (parsed.redirectUri) {
+        setSetting('google_redirect_uri', parsed.redirectUri)
+      }
+      return { success: true, clientId: parsed.clientId, clientSecret: parsed.clientSecret }
+    } catch (err: any) {
+      console.error('Erro ao ler arquivo de credenciais Google:', err)
+      return { success: false, error: err.message || 'Erro ao ler arquivo.' }
+    }
+  })
+
+  ipcMain.handle('sendSingleAppointmentReminder', async (_, appointmentId: number) => {
+    if (!isValidId(appointmentId)) return { success: false, error: 'ID inválido.' }
+    return await sendSingleAppointmentReminder(appointmentId)
   })
 
   ipcMain.handle('validateLicense', async (_, key: string) => {
@@ -401,7 +465,7 @@ export function registerIpcHandlers() {
 
     // Flush WAL para o banco principal garantindo integridade
     try {
-      const { getDb } = require('./database')
+      
       const dbInstance = getDb()
       if (dbInstance) {
         dbInstance.pragma('wal_checkpoint(TRUNCATE)')
@@ -412,9 +476,9 @@ export function registerIpcHandlers() {
 
     return new Promise((resolve, reject) => {
       try {
-        const archiverModule = require('archiver')
+        
         const output = createWriteStream(filePath)
-        const archive = new archiverModule.ZipArchive({ zlib: { level: 9 } })
+        const archive = archiverModule('zip', { zlib: { level: 9 } })
 
         output.on('close', () => {
           const timestamp = new Date().toISOString()
@@ -604,6 +668,90 @@ export function registerIpcHandlers() {
     return true
   })
 
+  ipcMain.handle('pickAndSaveCustomFeetMap', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [{ name: 'Imagens', extensions: ['jpg', 'png', 'jpeg', 'webp'] }]
+    })
+
+    if (canceled || filePaths.length === 0) return null
+
+    const sourcePath = filePaths[0]
+    const ext = path.extname(sourcePath).toLowerCase()
+
+    if (!ALLOWED_IMAGE_EXTENSIONS.has(ext)) {
+      console.warn('Upload de mapa dos pés rejeitado: extensão não permitida:', ext)
+      return null
+    }
+
+    try {
+      const stat = await fs.stat(sourcePath)
+      if (stat.size > MAX_IMAGE_SIZE_BYTES) {
+        console.warn('Upload de mapa dos pés rejeitado: tamanho excede 10MB:', stat.size)
+        return null
+      }
+    } catch (e) {
+      console.error('Erro ao verificar tamanho do mapa dos pés:', e)
+      return null
+    }
+
+    const fileName = `custom_feet_map${ext}`
+    const targetDir = app.getPath('userData')
+    const targetPath = path.join(targetDir, fileName)
+
+    const existingPath = getSetting('custom_feet_map_path')
+    if (existingPath && existingPath !== '') {
+      try {
+        if (existsSync(existingPath)) {
+          await fs.unlink(existingPath)
+        }
+      } catch (err) {
+        console.warn('Falha ao remover arquivo de mapa dos pés anterior:', err)
+      }
+    }
+
+    await fs.copyFile(sourcePath, targetPath)
+    setSetting('custom_feet_map_path', targetPath)
+
+    try {
+      const buffer = await fs.readFile(targetPath)
+      const extName = ext.slice(1)
+      return `data:image/${extName};base64,${buffer.toString('base64')}`
+    } catch (e) {
+      console.error('Falha ao ler mapa dos pés após upload:', e)
+      return null
+    }
+  })
+
+  ipcMain.handle('getCustomFeetMapBase64', async () => {
+    const mapPath = getSetting('custom_feet_map_path')
+    if (!mapPath || typeof mapPath !== 'string') return null
+    try {
+      if (!existsSync(mapPath)) return null
+      const buffer = await fs.readFile(mapPath)
+      const ext = path.extname(mapPath).slice(1)
+      return `data:image/${ext};base64,${buffer.toString('base64')}`
+    } catch (e) {
+      console.error('Falha ao ler arquivo do mapa dos pés personalizado:', e)
+      return null
+    }
+  })
+
+  ipcMain.handle('deleteCustomFeetMap', async () => {
+    const mapPath = getSetting('custom_feet_map_path')
+    if (mapPath && typeof mapPath === 'string') {
+      try {
+        if (existsSync(mapPath)) {
+          await fs.unlink(mapPath)
+        }
+      } catch (e) {
+        console.error('Falha ao deletar arquivo do mapa dos pés personalizado:', e)
+      }
+    }
+    setSetting('custom_feet_map_path', '')
+    return true
+  })
+
   ipcMain.handle('factoryReset', async (_, confirmationToken: string) => {
     // Exige estritamente a confirmação digitada para prevenir invocações acidentais ou não autorizadas
     if (typeof confirmationToken !== 'string' || confirmationToken.trim() !== 'APAGAR') {
@@ -638,6 +786,159 @@ export function registerIpcHandlers() {
     app.relaunch()
     app.exit(0)
     return true
+  })
+
+  // Auth & Session
+  ipcMain.handle('hasAdminUser', () => {
+    return hasAdminUser()
+  })
+  ipcMain.handle('setupAdminPassword', (_, password: string) => {
+    setupAdmin(password)
+    return true
+  })
+  ipcMain.handle('unlockSession', (_, password: string) => {
+    return unlockSession(password)
+  })
+  ipcMain.handle('lockSession', () => {
+    lockSession(null)
+    return true
+  })
+  ipcMain.handle('isSessionLocked', () => {
+    return isSessionLocked()
+  })
+  ipcMain.handle('activityPing', () => {
+    resetInactivityTimer()
+    return true
+  })
+
+  // Backup
+  ipcMain.handle('exportEncryptedBackup', async (_, password: string) => {
+    
+    
+    
+    const { filePath } = await dialog.showSaveDialog({
+      title: 'Exportar Backup Criptografado',
+      defaultPath: 'podonly_backup.zip.gcm',
+      filters: [{ name: 'Encrypted Backup', extensions: ['zip.gcm'] }]
+    })
+
+    if (!filePath) return false
+
+    await exportEncryptedBackup(filePath, password)
+    return true
+  })
+
+  // Audit Logs
+  ipcMain.handle('getAuditLogs', () => {
+    return getAuditLogs()
+  })
+
+  // PDF Export & Native Printing
+  ipcMain.handle('exportHtmlToPdf', async (_, htmlContent: string, defaultFileName: string) => {
+    if (typeof htmlContent !== 'string' || !htmlContent.trim()) {
+      return { success: false, error: 'Conteúdo do documento vazio.' }
+    }
+
+    const safeFileName = typeof defaultFileName === 'string' && defaultFileName.trim()
+      ? defaultFileName.trim().replace(/[^a-zA-Z0-9_\-\.]/g, '_')
+      : 'documento_podologia.pdf'
+
+    const { filePath, canceled } = await dialog.showSaveDialog({
+      title: 'Salvar Documento em PDF',
+      defaultPath: safeFileName.endsWith('.pdf') ? safeFileName : `${safeFileName}.pdf`,
+      filters: [{ name: 'Documento PDF', extensions: ['pdf'] }]
+    })
+
+    if (canceled || !filePath) {
+      return { success: false, canceled: true }
+    }
+
+    let printWindow: BrowserWindow | null = null
+    try {
+      printWindow = new BrowserWindow({
+        show: false,
+        width: 800,
+        height: 1100,
+        webPreferences: {
+          nodeIntegration: false,
+          contextIsolation: true
+        }
+      })
+
+      await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`)
+      await new Promise((resolve) => setTimeout(resolve, 350))
+
+      const pdfBuffer = await printWindow.webContents.printToPDF({
+        pageSize: 'A4',
+        printBackground: true,
+        margins: {
+          top: 0.3,
+          bottom: 0.3,
+          left: 0.3,
+          right: 0.3
+        }
+      })
+
+      await fs.writeFile(filePath, pdfBuffer)
+      shell.openPath(filePath)
+
+      return { success: true, filePath }
+    } catch (err: any) {
+      console.error('Erro ao gerar PDF:', err)
+      return { success: false, error: err.message || 'Falha ao gerar arquivo PDF.' }
+    } finally {
+      if (printWindow && !printWindow.isDestroyed()) {
+        printWindow.destroy()
+      }
+    }
+  })
+
+  ipcMain.handle('printHtml', async (_, htmlContent: string) => {
+    if (typeof htmlContent !== 'string' || !htmlContent.trim()) {
+      return { success: false, error: 'Conteúdo do documento vazio.' }
+    }
+
+    let printWindow: BrowserWindow | null = null
+    try {
+      printWindow = new BrowserWindow({
+        show: false,
+        width: 800,
+        height: 1100,
+        webPreferences: {
+          nodeIntegration: false,
+          contextIsolation: true
+        }
+      })
+
+      await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`)
+      await new Promise((resolve) => setTimeout(resolve, 350))
+
+      return new Promise((resolve) => {
+        printWindow!.webContents.print(
+          {
+            silent: false,
+            printBackground: true,
+            pageSize: 'A4'
+          },
+          (success, failureReason) => {
+            if (printWindow && !printWindow.isDestroyed()) {
+              printWindow.destroy()
+            }
+            if (success) {
+              resolve({ success: true })
+            } else {
+              resolve({ success: false, error: failureReason })
+            }
+          }
+        )
+      })
+    } catch (err: any) {
+      console.error('Erro ao imprimir documento:', err)
+      if (printWindow && !printWindow.isDestroyed()) {
+        printWindow.destroy()
+      }
+      return { success: false, error: err.message || 'Falha na impressão.' }
+    }
   })
 }
 

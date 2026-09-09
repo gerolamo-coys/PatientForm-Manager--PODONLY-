@@ -15,9 +15,51 @@ import PatientForm from './screens/PatientForm'
 import CalendarScreen from './screens/CalendarScreen'
 import ActivationScreen from './screens/ActivationScreen'
 import FinancialScreen from './screens/FinancialScreen'
+import LockScreen from './screens/LockScreen'
 import { ArrowLeft } from 'lucide-react'
 import './assets/main.css'
 
+function SessionGuard({ children }: { children: React.ReactNode }) {
+  const [isLocked, setIsLocked] = React.useState(false)
+  const [isReady, setIsReady] = React.useState(false)
+  const lastPingRef = React.useRef(0)
+
+  React.useEffect(() => {
+    window.api.isSessionLocked().then(locked => {
+      setIsLocked(locked)
+      setIsReady(true)
+    })
+
+    const cleanup = window.api.onSessionLocked(() => {
+      setIsLocked(true)
+    })
+
+    const pingActivity = () => {
+      const now = Date.now()
+      if (now - lastPingRef.current > 30000) {
+        lastPingRef.current = now
+        window.api.activityPing()
+      }
+    }
+
+    window.addEventListener('click', pingActivity)
+    window.addEventListener('keydown', pingActivity)
+
+    return () => {
+      cleanup()
+      window.removeEventListener('click', pingActivity)
+      window.removeEventListener('keydown', pingActivity)
+    }
+  }, [])
+
+  if (!isReady) return null
+
+  if (isLocked) {
+    return <LockScreen onUnlocked={() => setIsLocked(false)} />
+  }
+
+  return <>{children}</>
+}
 
 function NavigationSwitch() {
   const location = useLocation()
@@ -190,7 +232,9 @@ function App(): React.JSX.Element {
   return (
     <HashRouter>
       <AppGuard>
-        <AppContent />
+        <SessionGuard>
+          <AppContent />
+        </SessionGuard>
       </AppGuard>
     </HashRouter>
   )

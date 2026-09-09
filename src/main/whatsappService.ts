@@ -178,6 +178,59 @@ export async function sendTestWhatsappMessage(phone: string, message: string): P
   }
 }
 
+export async function sendSingleAppointmentReminder(appointmentId: number): Promise<{ success: boolean; error?: string }> {
+  if (currentStatus !== 'CONNECTED' || !client) {
+    return { success: false, error: 'O WhatsApp não está conectado. Conecte nas configurações.' }
+  }
+
+  const db = getDb()
+  if (!db) {
+    return { success: false, error: 'Banco de dados não disponível.' }
+  }
+
+  const appt = db.prepare(`
+    SELECT a.id, a.start_time, a.title, p.first_name, p.last_name, p.phone
+    FROM appointments a
+    LEFT JOIN patients p ON a.patient_id = p.id
+    WHERE a.id = ?
+  `).get(appointmentId) as any
+
+  if (!appt) {
+    return { success: false, error: 'Agendamento não encontrado.' }
+  }
+
+  if (!appt.phone) {
+    return { success: false, error: 'O paciente associado não possui telefone cadastrado.' }
+  }
+
+  const cleanedPhone = formatPhoneNumber(appt.phone)
+  if (!cleanedPhone) {
+    return { success: false, error: 'Telefone do paciente inválido.' }
+  }
+
+  const apptDate = new Date(appt.start_time)
+  const dateStr = format(apptDate, 'dd/MM/yyyy')
+  const timeStr = format(apptDate, 'HH:mm')
+  const patientName = appt.first_name ? `${appt.first_name} ${appt.last_name || ''}`.trim() : appt.title
+
+  const template = getSetting('whatsapp_template') || 
+    'Olá {nome}! Passando para lembrar da sua consulta de podologia agendada para {data}, às {hora}.'
+
+  const message = template
+    .replace(/{nome}/g, patientName)
+    .replace(/{data}/g, dateStr)
+    .replace(/{hora}/g, timeStr)
+
+  try {
+    const chatId = cleanedPhone + '@c.us'
+    await client.sendMessage(chatId, message)
+    return { success: true }
+  } catch (err: any) {
+    console.error(`Failed to send reminder for appointment ${appointmentId}:`, err)
+    return { success: false, error: err.message || 'Erro ao enviar WhatsApp.' }
+  }
+}
+
 export async function sendTomorrowReminders() {
   if (currentStatus !== 'CONNECTED' || !client) {
     console.log('Reminder scheduler: WhatsApp is not connected. Skipping reminders.')

@@ -22,7 +22,17 @@ export const FootMapCanvas: React.FC<FootMapCanvasProps> = ({
   const [color, setColor] = useState('#ef4444');
   const [activeTool, setActiveTool] = useState<ActiveTool>('draw');
   const [isCanvasReady, setIsCanvasReady] = useState(false);
+  const [canvasBackgroundSrc, setCanvasBackgroundSrc] = useState<string>(feetMapImg);
   const hasLoadedInitial = useRef(false);
+
+  // Load custom feet canvas template if uploaded by user
+  useEffect(() => {
+    window.api.getCustomFeetMapBase64().then(customBase64 => {
+      if (customBase64) {
+        setCanvasBackgroundSrc(customBase64);
+      }
+    }).catch(console.error);
+  }, []);
 
   // Resize canvas to match container size
   useEffect(() => {
@@ -349,7 +359,7 @@ export const FootMapCanvas: React.FC<FootMapCanvasProps> = ({
 
       <div className="canvas-wrapper" ref={containerRef}>
         <img 
-          src={feetMapImg} 
+          src={canvasBackgroundSrc} 
           alt="Feet Map" 
           className="canvas-background"
           onLoad={() => {

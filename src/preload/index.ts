@@ -24,8 +24,14 @@ const api = {
   updateAppointment: (id: number, payload: any) => ipcRenderer.invoke('updateAppointment', id, payload),
   deleteAppointment: (id: number) => ipcRenderer.invoke('deleteAppointment', id),
 
+  isGoogleConnected: () => ipcRenderer.invoke('isGoogleConnected'),
+  getGoogleStatus: () => ipcRenderer.invoke('getGoogleStatus'),
+  disconnectGoogle: () => ipcRenderer.invoke('disconnectGoogle'),
+  cancelGoogleAuth: () => ipcRenderer.invoke('cancelGoogleAuth'),
   authenticateGoogle: () => ipcRenderer.invoke('authenticateGoogle'),
   pullFromGoogleCalendar: () => ipcRenderer.invoke('pullFromGoogleCalendar'),
+  importGoogleCredentialsFile: () => ipcRenderer.invoke('importGoogleCredentialsFile'),
+  sendSingleAppointmentReminder: (appointmentId: number) => ipcRenderer.invoke('sendSingleAppointmentReminder', appointmentId),
   getSetting: (key: string) => ipcRenderer.invoke('getSetting', key),
   setSetting: (key: string, value: string) => ipcRenderer.invoke('setSetting', key, value),
   getWhatsappStatus: () => ipcRenderer.invoke('getWhatsappStatus'),
@@ -43,6 +49,9 @@ const api = {
   pickAndSaveClinicLogo: () => ipcRenderer.invoke('pickAndSaveClinicLogo'),
   getClinicLogoBase64: () => ipcRenderer.invoke('getClinicLogoBase64'),
   deleteClinicLogo: () => ipcRenderer.invoke('deleteClinicLogo'),
+  pickAndSaveCustomFeetMap: () => ipcRenderer.invoke('pickAndSaveCustomFeetMap'),
+  getCustomFeetMapBase64: () => ipcRenderer.invoke('getCustomFeetMapBase64'),
+  deleteCustomFeetMap: () => ipcRenderer.invoke('deleteCustomFeetMap'),
   validateLicense: (key: string) => ipcRenderer.invoke('validateLicense', key),
   checkLicenseStatus: () => ipcRenderer.invoke('checkLicenseStatus'),
   getSubscriptionDetails: () => ipcRenderer.invoke('getSubscriptionDetails'),
@@ -53,6 +62,27 @@ const api = {
   deleteTransaction: (id: number) => ipcRenderer.invoke('deleteTransaction', id),
   getTransactions: (startDate: string, endDate: string) => ipcRenderer.invoke('getTransactions', startDate, endDate),
   getFinancialSummary: (startDate: string, endDate: string) => ipcRenderer.invoke('getFinancialSummary', startDate, endDate),
+  
+  // Auth & Session
+  hasAdminUser: () => ipcRenderer.invoke('hasAdminUser'),
+  setupAdminPassword: (password: string) => ipcRenderer.invoke('setupAdminPassword', password),
+  unlockSession: (password: string) => ipcRenderer.invoke('unlockSession', password),
+  lockSession: () => ipcRenderer.invoke('lockSession'),
+  isSessionLocked: () => ipcRenderer.invoke('isSessionLocked'),
+  activityPing: () => ipcRenderer.invoke('activityPing'),
+  onSessionLocked: (callback: () => void) => {
+    ipcRenderer.on('session-locked', callback)
+    return () => ipcRenderer.removeListener('session-locked', callback)
+  },
+
+  // Backup & Audit
+  exportEncryptedBackup: (password: string) => ipcRenderer.invoke('exportEncryptedBackup', password),
+  getAuditLogs: () => ipcRenderer.invoke('getAuditLogs'),
+  
+  // PDF Export & Print
+  exportHtmlToPdf: (htmlContent: string, defaultFileName: string) => ipcRenderer.invoke('exportHtmlToPdf', htmlContent, defaultFileName),
+  printHtml: (htmlContent: string) => ipcRenderer.invoke('printHtml', htmlContent),
+
   onWhatsappStatus: (callback: (data: { status: 'DISCONNECTED' | 'CONNECTING' | 'QR_READY' | 'CONNECTED'; qrDataUri: string }) => void) => {
     const subscription = (_event: unknown, data: { status: 'DISCONNECTED' | 'CONNECTING' | 'QR_READY' | 'CONNECTED'; qrDataUri: string }) => callback(data)
     ipcRenderer.on('whatsapp-status', subscription)

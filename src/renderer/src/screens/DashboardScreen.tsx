@@ -1,10 +1,41 @@
 import React, { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
-import { Calendar, Users, Plus, Coffee, Settings, Send, Save, X, Download, Briefcase, Clock, Database, Globe, RefreshCw, Trash2, TrendingUp, CreditCard } from 'lucide-react'
+import { 
+  Calendar, 
+  Users, 
+  Plus, 
+  Coffee, 
+  Settings, 
+  Send, 
+  Save, 
+  X, 
+  Briefcase, 
+  Clock, 
+  Database, 
+  Globe, 
+  RefreshCw, 
+  TrendingUp, 
+  CreditCard, 
+  Shield, 
+  CheckCircle2, 
+  MessageCircle, 
+  DollarSign, 
+  ChevronRight, 
+  Sparkles,
+  User,
+  ArrowUpRight,
+  AlertCircle,
+  Download,
+  Trash2,
+  Upload,
+  RotateCcw,
+  ExternalLink
+} from 'lucide-react'
 import { format, isFuture, differenceInMinutes, startOfDay, endOfDay, isBefore, startOfMonth, endOfMonth } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
-import type { FinancialSummary } from '../../../shared/types'
+import type { FinancialSummary, AppointmentStatus } from '../../../shared/types'
+import feetMapDefaultImg from '../assets/feet-map.png'
 
 
 export default function DashboardScreen(): React.JSX.Element {
@@ -28,11 +59,7 @@ export default function DashboardScreen(): React.JSX.Element {
   const [testError, setTestError] = useState<string | null>(null)
   
   const [showSettingsModal, setShowSettingsModal] = useState(false)
-  const [activeSettingsTab, setActiveSettingsTab] = useState<'profile' | 'preferences' | 'whatsapp' | 'google' | 'storage' | 'subscription'>('profile')
-  const [lastBackupDate, setLastBackupDate] = useState<string | null>(null)
-  const [backupLoading, setBackupLoading] = useState(false)
-  const [backupSuccessPath, setBackupSuccessPath] = useState<string | null>(null)
-  const [backupError, setBackupError] = useState<string | null>(null)
+  const [activeSettingsTab, setActiveSettingsTab] = useState<'profile' | 'preferences' | 'whatsapp' | 'google' | 'storage' | 'subscription' | 'security'>('profile')
 
   // Profile settings states
   const [profName, setProfName] = useState('')
@@ -43,11 +70,14 @@ export default function DashboardScreen(): React.JSX.Element {
 
   // Preferences settings states
   const [defaultDuration, setDefaultDuration] = useState('60')
+  const [customFeetMap, setCustomFeetMap] = useState<string | null>(null)
 
   // Google settings states
   const [googleClientId, setGoogleClientId] = useState('')
   const [googleClientSecret, setGoogleClientSecret] = useState('')
   const [googleIsAuthenticated, setGoogleIsAuthenticated] = useState(false)
+  const [googleIsConfigured, setGoogleIsConfigured] = useState(false)
+  const [googleAccountEmail, setGoogleAccountEmail] = useState<string | null>(null)
   const [googleIsSyncing, setGoogleIsSyncing] = useState(false)
 
   // Storage settings states
@@ -87,13 +117,11 @@ export default function DashboardScreen(): React.JSX.Element {
       window.api.getSetting('whatsapp_time'),
       window.api.getSetting('whatsapp_template'),
       window.api.getSetting('last_backup_date')
-    ]).then(([enabled, time, template, lastBackup]) => {
+    ]).then(([enabled, time, template, _lastBackup]) => {
       setBotEnabled(enabled === 'true')
       if (time) setBotTime(time)
       if (template) setBotTemplate(template)
       else setBotTemplate('Olá {nome}! Passando para lembrar da sua consulta de podologia amanhã, {data}, às {hora}.')
-      
-      if (lastBackup) setLastBackupDate(lastBackup)
     }).catch(console.error)
 
     return () => {
@@ -111,9 +139,8 @@ export default function DashboardScreen(): React.JSX.Element {
         window.api.getSetting('default_appointment_duration'),
         window.api.getSetting('google_client_id'),
         window.api.getSetting('google_client_secret'),
-        window.api.getSetting('google_auth_tokens'),
-        window.api.getSetting('last_backup_date')
-      ]).then(([prof, clinic, addr, phone, duration, gClientId, gClientSecret, gTokens, lastBackup]) => {
+        window.api.getGoogleStatus()
+      ]).then(([prof, clinic, addr, phone, duration, gClientId, gClientSecret, gStatus]) => {
         setProfName(prof || '')
         setClinicName(clinic || '')
         setClinicAddress(addr || '')
@@ -121,12 +148,17 @@ export default function DashboardScreen(): React.JSX.Element {
         setDefaultDuration(duration || '60')
         setGoogleClientId(gClientId || '')
         setGoogleClientSecret(gClientSecret || '')
-        setGoogleIsAuthenticated(!!gTokens)
-        if (lastBackup) setLastBackupDate(lastBackup)
+        setGoogleIsAuthenticated(Boolean(gStatus?.isConnected))
+        setGoogleIsConfigured(Boolean(gStatus?.isConfigured))
+        setGoogleAccountEmail(gStatus?.email || null)
       }).catch(console.error)
 
       window.api.getClinicLogoBase64().then((logo) => {
         setClinicLogo(logo)
+      }).catch(console.error)
+
+      window.api.getCustomFeetMapBase64().then((map) => {
+        setCustomFeetMap(map)
       }).catch(console.error)
 
       window.api.getDiskUsage().then((usage) => {
@@ -136,8 +168,6 @@ export default function DashboardScreen(): React.JSX.Element {
       setShowResetConfirm(false)
       setResetConfirmText('')
       setSaveSuccess(false)
-      setBackupSuccessPath(null)
-      setBackupError(null)
       setSubDetails(null)
       setSubError(null)
     }
@@ -244,27 +274,6 @@ export default function DashboardScreen(): React.JSX.Element {
     }
   }
 
-  const handleBackup = async () => {
-    setBackupLoading(true)
-    setBackupError(null)
-    setBackupSuccessPath(null)
-    try {
-      const path = await window.api.createBackup()
-      if (path) {
-        setBackupSuccessPath(path)
-        const date = new Date().toISOString()
-        setLastBackupDate(date)
-      }
-    } catch (err: unknown) {
-      console.error(err)
-      const errorObj = err as { message?: string } | null
-      setBackupError(errorObj?.message || 'Erro ao realizar backup.')
-    } finally {
-
-      setBackupLoading(false)
-    }
-  }
-
   const handleSaveProfile = async () => {
     try {
       await window.api.setSetting('profile_professional_name', profName)
@@ -302,6 +311,34 @@ export default function DashboardScreen(): React.JSX.Element {
     }
   }
 
+  const handleImportFeetMap = async () => {
+    try {
+      const mapBase64 = await window.api.pickAndSaveCustomFeetMap()
+      if (mapBase64) {
+        setCustomFeetMap(mapBase64)
+        setSaveSuccess(true)
+        setTimeout(() => setSaveSuccess(false), 3000)
+      }
+    } catch (err) {
+      console.error('Erro ao importar mapa dos pés:', err)
+    }
+  }
+
+  const handleRemoveFeetMap = async () => {
+    if (window.confirm('Tem certeza que deseja restaurar o mapa dos pés padrão do sistema?')) {
+      try {
+        const success = await window.api.deleteCustomFeetMap()
+        if (success) {
+          setCustomFeetMap(null)
+          setSaveSuccess(true)
+          setTimeout(() => setSaveSuccess(false), 3000)
+        }
+      } catch (err) {
+        console.error('Erro ao restaurar mapa dos pés padrão:', err)
+      }
+    }
+  }
+
   const handleSavePreferences = async () => {
     try {
       await window.api.setSetting('default_appointment_duration', defaultDuration)
@@ -314,8 +351,15 @@ export default function DashboardScreen(): React.JSX.Element {
 
   const handleSaveGoogleConfig = async () => {
     try {
-      await window.api.setSetting('google_client_id', googleClientId)
-      await window.api.setSetting('google_client_secret', googleClientSecret)
+      const trimmedId = googleClientId.trim()
+      const trimmedSecret = googleClientSecret.trim()
+      if (!trimmedId || !trimmedSecret) {
+        alert('Preencha o Client ID e o Client Secret.')
+        return
+      }
+      await window.api.setSetting('google_client_id', trimmedId)
+      await window.api.setSetting('google_client_secret', trimmedSecret)
+      setGoogleIsConfigured(true)
       setSaveSuccess(true)
       setTimeout(() => setSaveSuccess(false), 3000)
     } catch (err) {
@@ -323,27 +367,58 @@ export default function DashboardScreen(): React.JSX.Element {
     }
   }
 
+  const handleImportGoogleCredentials = async () => {
+    const res = await window.api.importGoogleCredentialsFile()
+    if (res && res.success && res.clientId && res.clientSecret) {
+      setGoogleClientId(res.clientId)
+      setGoogleClientSecret(res.clientSecret)
+      setGoogleIsConfigured(true)
+      setSaveSuccess(true)
+      setTimeout(() => setSaveSuccess(false), 3000)
+    } else if (res && !res.success) {
+      alert(res.error || 'Falha ao importar arquivo JSON.')
+    }
+  }
+
   const handleGoogleAuthenticate = async () => {
-    if (!googleClientId || !googleClientSecret) {
-      alert("Por favor, configure o Client ID e Secret primeiro.")
+    const trimmedId = googleClientId.trim()
+    const trimmedSecret = googleClientSecret.trim()
+
+    if (!googleIsConfigured && (!trimmedId || !trimmedSecret)) {
+      alert("Por favor, configure o Client ID e Secret primeiro ou importe o arquivo credentials.json.")
       return
     }
-    const success = await window.api.authenticateGoogle()
-    if (success) {
-      setGoogleIsAuthenticated(true)
-      setGoogleIsSyncing(true)
-      const result = await window.api.pullFromGoogleCalendar()
-      if (result && !result.success) {
-        alert(`Erro na sincronização inicial: ${result.error}`)
+
+    if (trimmedId && trimmedSecret) {
+      await window.api.setSetting('google_client_id', trimmedId)
+      await window.api.setSetting('google_client_secret', trimmedSecret)
+      setGoogleIsConfigured(true)
+    }
+
+    try {
+      const success = await window.api.authenticateGoogle()
+      if (success) {
+        const status = await window.api.getGoogleStatus()
+        setGoogleIsAuthenticated(true)
+        setGoogleAccountEmail(status.email)
+        setGoogleIsSyncing(true)
+        const result = await window.api.pullFromGoogleCalendar()
+        if (result && !result.success) {
+          alert(`Erro na sincronização inicial: ${result.error}`)
+        }
+        setGoogleIsSyncing(false)
       }
+    } catch (err: any) {
+      alert(err.message || 'Erro ao autenticar com o Google.')
       setGoogleIsSyncing(false)
     }
   }
 
   const handleGoogleDisconnect = async () => {
     if (window.confirm('Tem certeza que deseja desconectar sua conta do Google?')) {
-      await window.api.setSetting('google_auth_tokens', '')
+      await window.api.disconnectGoogle()
       setGoogleIsAuthenticated(false)
+      setGoogleAccountEmail(null)
     }
   }
 
@@ -386,6 +461,15 @@ export default function DashboardScreen(): React.JSX.Element {
     }
   }
 
+  const [sendingWhatsappId, setSendingWhatsappId] = useState<number | null>(null)
+  const [updatingStatusId, setUpdatingStatusId] = useState<number | null>(null)
+  const [toast, setToast] = useState<{ message: string; type?: 'success' | 'error' } | null>(null)
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type })
+    setTimeout(() => setToast(null), 3000)
+  }
+
   const statusInfo = getStatusDetails()
 
   useEffect(() => {
@@ -416,24 +500,82 @@ export default function DashboardScreen(): React.JSX.Element {
     }
   }
 
-  const now = new Date()
-  let nextApptId: number | null = null
-  for (const appt of appointments) {
-    if (isFuture(new Date(appt.end_time))) {
-      nextApptId = appt.id
-      break
+  const handleSendReminder = async (e: React.MouseEvent, apptId: number, patientName: string) => {
+    e.stopPropagation()
+    setSendingWhatsappId(apptId)
+    try {
+      const res = await window.api.sendSingleAppointmentReminder(apptId)
+      if (res.success) {
+        showToast(`Lembrete enviado para ${patientName}!`, 'success')
+      } else {
+        showToast(res.error || 'Não foi possível enviar o lembrete.', 'error')
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Erro ao enviar lembrete.', 'error')
+    } finally {
+      setSendingWhatsappId(null)
     }
+  }
+
+  const handleToggleStatus = async (e: React.MouseEvent, apptId: number, currentStatus?: string) => {
+    e.stopPropagation()
+    setUpdatingStatusId(apptId)
+    const newStatus: AppointmentStatus = currentStatus === 'COMPLETED' ? 'SCHEDULED' : 'COMPLETED'
+    try {
+      const appt = appointments.find(a => a.id === apptId)
+      if (!appt) return
+      await window.api.updateAppointment(apptId, { ...appt, status: newStatus })
+      setAppointments(prev => prev.map(a => a.id === apptId ? { ...a, status: newStatus } : a))
+      showToast(newStatus === 'COMPLETED' ? 'Consulta marcada como concluída!' : 'Consulta reaberta!', 'success')
+    } catch (err: any) {
+      showToast('Erro ao atualizar status.', 'error')
+    } finally {
+      setUpdatingStatusId(null)
+    }
+  }
+
+  const getStatusBadge = (status?: string) => {
+    switch (status) {
+      case 'COMPLETED':
+        return { label: 'Concluído', color: '#16a34a', bg: 'rgba(22, 163, 74, 0.12)', border: 'rgba(22, 163, 74, 0.25)' }
+      case 'CONFIRMED':
+        return { label: 'Confirmado', color: '#0284c7', bg: 'rgba(2, 132, 199, 0.12)', border: 'rgba(2, 132, 199, 0.25)' }
+      case 'MISSED':
+        return { label: 'Faltou', color: '#dc2626', bg: 'rgba(220, 38, 38, 0.12)', border: 'rgba(220, 38, 38, 0.25)' }
+      case 'CANCELLED':
+        return { label: 'Cancelado', color: '#64748b', bg: 'rgba(100, 116, 139, 0.12)', border: 'rgba(100, 116, 139, 0.25)' }
+      case 'SCHEDULED':
+      default:
+        return { label: 'Agendado', color: 'var(--accent-color)', bg: 'rgba(14, 145, 168, 0.12)', border: 'rgba(14, 145, 168, 0.25)' }
+    }
+  }
+
+  const now = new Date()
+  const completedCount = appointments.filter(a => a.status === 'COMPLETED').length
+  const pendingCount = appointments.filter(a => a.status !== 'COMPLETED' && a.status !== 'CANCELLED').length
+
+  const nextAppt = appointments.find(a => isFuture(new Date(a.end_time)) && a.status !== 'COMPLETED' && a.status !== 'CANCELLED')
+  const nextApptId = nextAppt?.id || null
+
+  const getNextApptCountdown = (appt: any) => {
+    const start = new Date(appt.start_time)
+    const diff = differenceInMinutes(start, now)
+    if (diff <= 0) return 'Agora'
+    if (diff < 60) return `Em ${diff} min`
+    const hours = Math.floor(diff / 60)
+    const mins = diff % 60
+    return mins > 0 ? `Em ${hours}h ${mins}m` : `Em ${hours}h`
   }
 
   const renderTimeline = () => {
     if (appointments.length === 0) {
       return (
-        <div className="empty-state">
-          <Calendar size={48} />
-          <h3>Nenhum agendamento para hoje</h3>
-          <p>Você tem o dia livre!</p>
-          <button className="btn btn-primary" onClick={() => navigate('/calendar')} style={{ marginTop: '1.5rem', display: 'inline-flex', alignItems: 'center' }}>
-            <Plus size={18} style={{ transform: 'translateY(1px)' }} /> <span>Novo Agendamento</span>
+        <div className="empty-state" style={{ padding: '3.5rem 1.5rem', background: 'rgba(255, 255, 255, 0.5)', borderRadius: '16px', border: '1px solid var(--surface-border)' }}>
+          <Calendar size={52} color="var(--accent-color)" style={{ opacity: 0.8, marginBottom: '0.5rem' }} />
+          <h3 style={{ fontSize: '1.2rem', fontWeight: 700, margin: '0 0 0.4rem 0', color: 'var(--text-primary)' }}>Nenhum agendamento para hoje</h3>
+          <p style={{ margin: 0, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>Você tem a agenda livre no dia de hoje.</p>
+          <button className="btn btn-primary" onClick={() => navigate('/calendar')} style={{ marginTop: '1.25rem', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.9rem' }}>
+            <Plus size={18} /> Novo Agendamento
           </button>
         </div>
       )
@@ -447,20 +589,132 @@ export default function DashboardScreen(): React.JSX.Element {
       const end = new Date(appt.end_time)
       const isNext = appt.id === nextApptId
       const isPastAppt = isBefore(end, now)
+      const isCompleted = appt.status === 'COMPLETED'
+      const badge = getStatusBadge(appt.status)
 
       items.push(
-        <div key={`appt-${appt.id}`} className={`timeline-item ${isNext ? 'timeline-item-next' : ''} ${isPastAppt ? 'timeline-item-past' : ''}`}>
-          <div className="timeline-time">
-            <strong>{format(start, 'HH:mm')}</strong>
-            <span>{format(end, 'HH:mm')}</span>
+        <div 
+          key={`appt-${appt.id}`} 
+          className={`agenda-card ${isNext ? 'agenda-card-next' : ''} ${isPastAppt ? 'agenda-card-past' : ''}`}
+          onClick={() => appt.patient_id ? navigate(`/patient/${appt.patient_id}`) : navigate('/calendar')}
+          style={{ cursor: 'pointer' }}
+        >
+          {/* Time Pill */}
+          <div className="agenda-time-pill">
+            <span className="agenda-time-start">{format(start, 'HH:mm')}</span>
+            <span className="agenda-time-end">{format(end, 'HH:mm')}</span>
           </div>
-          <div className="timeline-line"></div>
-          <div className="timeline-content glass-card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h4 style={{ margin: 0, fontSize: '1.05rem', color: isNext ? 'var(--accent-color)' : 'inherit' }}>{appt.title}</h4>
-              {isNext && <span className="next-badge">PRÓXIMO</span>}
+
+          {/* Details */}
+          <div className="agenda-details">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+              <h4 className="agenda-patient-name">{appt.title}</h4>
+              {isNext && (
+                <span className="next-badge" style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: '6px' }}>
+                  PRÓXIMO ({getNextApptCountdown(appt)})
+                </span>
+              )}
             </div>
-            {appt.notes && <p className="timeline-notes">{appt.notes}</p>}
+
+            <div className="agenda-meta-row">
+              <span style={{
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                color: badge.color,
+                background: badge.bg,
+                border: `1px solid ${badge.border}`,
+                padding: '0.15rem 0.5rem',
+                borderRadius: '6px'
+              }}>
+                {badge.label}
+              </span>
+
+              {appt.service_type && (
+                <span style={{
+                  fontSize: '0.75rem',
+                  color: 'var(--text-secondary)',
+                  background: 'rgba(241, 245, 249, 0.8)',
+                  padding: '0.15rem 0.5rem',
+                  borderRadius: '6px',
+                  border: '1px solid var(--surface-border)'
+                }}>
+                  {appt.service_type}
+                </span>
+              )}
+
+              {appt.price ? (
+                <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#16a34a', display: 'flex', alignItems: 'center', gap: '0.15rem' }}>
+                  {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(appt.price)}
+                </span>
+              ) : null}
+
+              {appt.notes && (
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', fontStyle: 'italic', maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  · {appt.notes}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="agenda-actions-row" onClick={(e) => e.stopPropagation()}>
+            {/* 1-Click WhatsApp Reminder */}
+            <button
+              type="button"
+              className="btn btn-secondary"
+              title="Enviar lembrete via WhatsApp"
+              disabled={sendingWhatsappId === appt.id}
+              onClick={(e) => handleSendReminder(e, appt.id, appt.title)}
+              style={{
+                padding: '0.4rem 0.65rem',
+                fontSize: '0.78rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+                color: '#16a34a',
+                borderColor: 'rgba(22, 163, 74, 0.3)',
+                background: 'rgba(22, 163, 74, 0.04)'
+              }}
+            >
+              <MessageCircle size={14} className={sendingWhatsappId === appt.id ? 'spin' : ''} />
+              <span style={{ display: 'inline' }}>{sendingWhatsappId === appt.id ? 'Enviando...' : 'WhatsApp'}</span>
+            </button>
+
+            {/* Quick Status Toggle: Mark as Completed */}
+            <button
+              type="button"
+              className="btn btn-secondary"
+              title={isCompleted ? 'Reabrir consulta' : 'Marcar como concluída'}
+              disabled={updatingStatusId === appt.id}
+              onClick={(e) => handleToggleStatus(e, appt.id, appt.status)}
+              style={{
+                padding: '0.4rem 0.65rem',
+                fontSize: '0.78rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+                color: isCompleted ? '#16a34a' : 'var(--text-secondary)',
+                borderColor: isCompleted ? 'rgba(22, 163, 74, 0.3)' : 'var(--surface-border)',
+                background: isCompleted ? 'rgba(22, 163, 74, 0.08)' : 'white'
+              }}
+            >
+              <CheckCircle2 size={14} color={isCompleted ? '#16a34a' : 'currentColor'} />
+              <span>{isCompleted ? 'Concluído' : 'Concluir'}</span>
+            </button>
+
+            {/* View Patient Chart */}
+            {appt.patient_id && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                title="Abrir prontuário do paciente"
+                onClick={() => navigate(`/patient/${appt.patient_id}`)}
+                style={{ padding: '0.4rem 0.65rem', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
+              >
+                <User size={13} />
+                <ChevronRight size={14} />
+              </button>
+            )}
           </div>
         </div>
       )
@@ -471,13 +725,9 @@ export default function DashboardScreen(): React.JSX.Element {
 
         if (gapMinutes >= 15) {
           items.push(
-            <div key={`break-${appt.id}`} className="timeline-break">
-              <div className="timeline-time"></div>
-              <div className="timeline-line break-line"></div>
-              <div className="break-content">
-                <Coffee size={16} />
-                <span>Intervalo de {gapMinutes >= 60 ? `${Math.floor(gapMinutes / 60)}h ${gapMinutes % 60}min` : `${gapMinutes} min`}</span>
-              </div>
+            <div key={`break-${appt.id}`} className="timeline-break-pill">
+              <Coffee size={14} color="var(--accent-color)" />
+              <span>Intervalo de {gapMinutes >= 60 ? `${Math.floor(gapMinutes / 60)}h ${gapMinutes % 60}min` : `${gapMinutes} min`}</span>
             </div>
           )
         }
@@ -494,63 +744,170 @@ export default function DashboardScreen(): React.JSX.Element {
 
   return (
     <div className="dashboard-container animate-fade-in-up">
-      {/* Compact top bar: bot status (left) + settings trigger (right) */}
-      <div className="dashboard-top-bar animate-fade-in-up stagger-1">
-        <div className="bot-status-compact">
-          <span className={`bot-status-dot ${statusInfo.className}`} />
-          <span className="bot-status-text">WhatsApp: {statusInfo.label}</span>
+      {/* Toast Feedback */}
+      {toast && (
+        <div style={{
+          position: 'fixed',
+          top: '20px',
+          right: '20px',
+          background: toast.type === 'error' ? '#ef4444' : '#10b981',
+          color: 'white',
+          padding: '0.75rem 1.25rem',
+          borderRadius: '10px',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+          fontSize: '0.85rem',
+          fontWeight: 600,
+          zIndex: 9999,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.5rem',
+          animation: 'pageFadeInUp 0.2s ease-out'
+        }}>
+          {toast.type === 'error' ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
+          {toast.message}
         </div>
+      )}
+
+      {/* Top Header Bar */}
+      <div className="dashboard-top-bar animate-fade-in-up stagger-1">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <div className="bot-status-compact">
+            <span className={`bot-status-dot ${statusInfo.className}`} />
+            <span className="bot-status-text">WhatsApp: {statusInfo.label}</span>
+          </div>
+        </div>
+
         <button
           className="btn-icon-subtle"
           onClick={() => setShowSettingsModal(true)}
-          title="Configurações"
+          title="Configurações Gerais"
         >
+          <Settings size={14} />
           <span>Configurações</span>
-          <Settings size={13} />
         </button>
       </div>
 
-      {/* Greeting */}
-      <div className="dashboard-greeting animate-fade-in-up stagger-2">
-        <h2>{greeting}!</h2>
-        <p>Hoje é {format(now, "EEEE, d 'de' MMMM", { locale: ptBR })}</p>
+      {/* Greeting & Date Banner */}
+      <div className="dashboard-greeting animate-fade-in-up stagger-2" style={{ marginBottom: '1.5rem' }}>
+        <h2>{greeting}{profName ? `, ${profName}` : ''}!</h2>
+        <p style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.4rem', textTransform: 'capitalize' }}>
+          <Sparkles size={15} color="var(--accent-color)" />
+          {format(now, "EEEE, d 'de' MMMM 'de' yyyy", { locale: ptBR })}
+        </p>
       </div>
 
-      {/* Stats + Quick Actions */}
-      <div className="dashboard-stats-row animate-fade-in-up stagger-3">
-        <div className="stat-card-mini">
-          <div className="stat-card-mini-value">{appointments.length}</div>
-          <div className="stat-card-mini-label">Consultas Hoje</div>
+      {/* 4-Column Modern KPI Cards Grid */}
+      <div className="dashboard-kpi-grid animate-fade-in-up stagger-3">
+        {/* KPI 1: Consultas Hoje */}
+        <div className="kpi-card" onClick={() => navigate('/calendar')} style={{ cursor: 'pointer' }}>
+          <div className="kpi-header">
+            <span className="kpi-title">Consultas Hoje</span>
+            <div className="kpi-icon-wrap" style={{ background: 'rgba(14, 145, 168, 0.1)', color: 'var(--accent-color)' }}>
+              <Calendar size={18} />
+            </div>
+          </div>
+          <div className="kpi-value">{appointments.length}</div>
+          <div className="kpi-subtitle">
+            {appointments.length > 0 ? (
+              <span style={{ color: '#16a34a' }}>✓ {completedCount} concluídas · {pendingCount} pendentes</span>
+            ) : (
+              <span>Nenhuma consulta agendada</span>
+            )}
+          </div>
         </div>
-        <div className="stat-card-mini" onClick={() => navigate('/patients')} style={{ cursor: 'pointer', transition: 'transform 0.2s' }} onMouseOver={e => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={e => e.currentTarget.style.transform = 'scale(1)'}>
-          <div className="stat-card-mini-value">{totalPatients}</div>
-          <div className="stat-card-mini-label">Total de Pacientes</div>
+
+        {/* KPI 2: Próximo Paciente */}
+        <div className="kpi-card" onClick={() => navigate('/calendar')} style={{ cursor: 'pointer' }}>
+          <div className="kpi-header">
+            <span className="kpi-title">Próximo Atendimento</span>
+            <div className="kpi-icon-wrap" style={{ background: 'rgba(99, 102, 241, 0.1)', color: '#6366f1' }}>
+              <Clock size={18} />
+            </div>
+          </div>
+          <div className="kpi-value" style={{ fontSize: nextAppt ? '1.5rem' : '1.35rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {nextAppt ? format(new Date(nextAppt.start_time), 'HH:mm') : 'Livre'}
+          </div>
+          <div className="kpi-subtitle" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {nextAppt ? (
+              <span>👤 {nextAppt.title} ({getNextApptCountdown(nextAppt)})</span>
+            ) : (
+              <span>Nenhum atendimento pendente hoje</span>
+            )}
+          </div>
         </div>
-        <div className="stat-card-mini" onClick={() => navigate('/financial')} style={{ cursor: 'pointer', transition: 'transform 0.2s' }} onMouseOver={e => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={e => e.currentTarget.style.transform = 'scale(1)'}>
-          <div className="stat-card-mini-value" style={{ color: financialSummary?.netBalance && financialSummary.netBalance >= 0 ? '#16a34a' : (financialSummary?.netBalance && financialSummary.netBalance < 0 ? '#dc2626' : 'inherit') }}>
+
+        {/* KPI 3: Total Pacientes */}
+        <div className="kpi-card" onClick={() => navigate('/patients')} style={{ cursor: 'pointer' }}>
+          <div className="kpi-header">
+            <span className="kpi-title">Pacientes Cadastrados</span>
+            <div className="kpi-icon-wrap" style={{ background: 'rgba(168, 85, 247, 0.1)', color: '#a855f7' }}>
+              <Users size={18} />
+            </div>
+          </div>
+          <div className="kpi-value">{totalPatients}</div>
+          <div className="kpi-subtitle" style={{ color: 'var(--accent-color)' }}>
+            <span>Ver lista de pacientes</span> <ArrowUpRight size={13} />
+          </div>
+        </div>
+
+        {/* KPI 4: Saldo do Mês */}
+        <div className="kpi-card" onClick={() => navigate('/financial')} style={{ cursor: 'pointer' }}>
+          <div className="kpi-header">
+            <span className="kpi-title">Saldo do Mês</span>
+            <div className="kpi-icon-wrap" style={{ background: 'rgba(22, 163, 74, 0.1)', color: '#16a34a' }}>
+              <TrendingUp size={18} />
+            </div>
+          </div>
+          <div className="kpi-value" style={{ fontSize: '1.45rem', color: financialSummary?.netBalance && financialSummary.netBalance >= 0 ? '#16a34a' : (financialSummary?.netBalance && financialSummary.netBalance < 0 ? '#dc2626' : 'inherit') }}>
             {financialSummary ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(financialSummary.netBalance) : 'R$ 0,00'}
           </div>
-          <div className="stat-card-mini-label" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-            <TrendingUp size={12} /> Saldo do Mês
+          <div className="kpi-subtitle">
+            {financialSummary ? (
+              <span>Receitas {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(financialSummary.totalIncome)}</span>
+            ) : (
+              <span>Ver fluxo financeiro</span>
+            )}
           </div>
         </div>
-        <div className="stat-card-mini dashboard-quick-actions">
-          <button className="btn btn-primary" onClick={() => navigate('/calendar')} style={{ width: '100%', justifyContent: 'flex-start' }}>
+      </div>
+
+      {/* Fast Action Bar */}
+      <div className="dashboard-action-bar animate-fade-in-up stagger-3">
+        <div className="dashboard-action-left">
+          <button className="btn btn-primary" onClick={() => navigate('/calendar')} style={{ fontSize: '0.86rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             <Plus size={16} /> Novo Agendamento
           </button>
-          <button className="btn btn-secondary" onClick={() => navigate('/patient/new')} style={{ width: '100%', justifyContent: 'flex-start' }}>
+          <button className="btn btn-secondary" onClick={() => navigate('/patient/new')} style={{ fontSize: '0.86rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             <Users size={16} /> Novo Paciente
           </button>
         </div>
+
+        <div className="dashboard-action-right">
+          <button className="btn btn-secondary" onClick={() => navigate('/calendar')} style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+            <Calendar size={14} /> Ver Calendário Completo
+          </button>
+          <button className="btn btn-secondary" onClick={() => navigate('/financial')} style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+            <DollarSign size={14} /> Financeiro
+          </button>
+        </div>
       </div>
 
-      {/* Full-width Agenda Timeline */}
+      {/* Agenda Timeline Feed */}
       <section className="dashboard-agenda-section animate-fade-in-up stagger-4">
         <div className="dashboard-section-header">
-          <h3><Calendar size={20} /> Agenda do Dia</h3>
+          <h3>
+            <Calendar size={20} color="var(--accent-color)" /> Agenda de Hoje ({appointments.length})
+          </h3>
+          <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+            {completedCount} de {appointments.length} atendimentos concluídos
+          </span>
         </div>
+
         {loading ? (
-          <p style={{ color: 'var(--text-secondary)', padding: '1rem 0' }}>Carregando agenda...</p>
+          <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+            <RefreshCw size={20} className="spin" style={{ marginBottom: '0.5rem' }} />
+            <p style={{ margin: 0, fontSize: '0.85rem' }}>Carregando agenda do dia...</p>
+          </div>
         ) : (
           <div className="timeline">{renderTimeline()}</div>
         )}
@@ -606,7 +963,13 @@ export default function DashboardScreen(): React.JSX.Element {
                   className={`settings-tab-btn ${activeSettingsTab === 'subscription' ? 'active' : ''}`}
                   onClick={() => { setActiveSettingsTab('subscription'); setSaveSuccess(false); }}
                 >
-                  <CreditCard size={16} /> Minha Assinatura
+                  <CreditCard size={15} /> Assinatura
+                </button>
+                <button
+                  className={`settings-tab-btn ${activeSettingsTab === 'security' ? 'active' : ''}`}
+                  onClick={() => { setActiveSettingsTab('security'); setSaveSuccess(false); }}
+                >
+                  <Shield size={15} /> Segurança & Auditoria
                 </button>
               </div>
 
@@ -806,6 +1169,85 @@ export default function DashboardScreen(): React.JSX.Element {
                         </div>
                       )}
                     </div>
+
+                    {/* Feet Map Canvas Customization Section */}
+                    <div className="modal-section" style={{ marginTop: '1.75rem' }}>
+                      <div className="modal-section-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+                        <span>Mapa Anatômico dos Pés (Canvas Clínico)</span>
+                        <span style={{
+                          fontSize: '0.72rem',
+                          fontWeight: 600,
+                          padding: '0.2rem 0.65rem',
+                          borderRadius: '12px',
+                          background: customFeetMap ? 'rgba(16, 185, 129, 0.15)' : 'rgba(14, 145, 168, 0.12)',
+                          color: customFeetMap ? '#10b981' : 'var(--accent-color)',
+                          border: `1px solid ${customFeetMap ? 'rgba(16, 185, 129, 0.3)' : 'rgba(14, 145, 168, 0.25)'}`
+                        }}>
+                          {customFeetMap ? '⭐ Modelo Personalizado Ativo' : '✓ Modelo Padrão do Sistema'}
+                        </span>
+                      </div>
+                      <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                        Defina a imagem de fundo anatômica dos pés usada para demarcações de patologias e desenhos nas consultas clínicas.
+                      </p>
+
+                      <div style={{
+                        marginTop: '1rem',
+                        padding: '1.25rem',
+                        background: 'rgba(255, 255, 255, 0.03)',
+                        borderRadius: '10px',
+                        border: '1px dashed var(--surface-border)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: '1rem'
+                      }}>
+                        <div style={{
+                          width: '100%',
+                          maxWidth: '380px',
+                          height: '200px',
+                          borderRadius: '8px',
+                          background: '#ffffff',
+                          border: '1px solid rgba(0,0,0,0.08)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          overflow: 'hidden',
+                          padding: '8px',
+                          boxShadow: '0 4px 12px rgba(0,0,0,0.06)'
+                        }}>
+                          <img
+                            src={customFeetMap || feetMapDefaultImg}
+                            alt="Mapa dos pés"
+                            style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                          />
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+                          <button
+                            type="button"
+                            className="btn btn-primary"
+                            style={{ fontSize: '0.82rem', padding: '0.45rem 1rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+                            onClick={handleImportFeetMap}
+                          >
+                            <Upload size={14} /> {customFeetMap ? 'Substituir Diagrama dos Pés' : 'Importar Seu Diagrama / Canvas'}
+                          </button>
+                          {customFeetMap && (
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              style={{ fontSize: '0.82rem', padding: '0.45rem 0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#fca5a5', borderColor: 'rgba(239, 68, 68, 0.3)' }}
+                              onClick={handleRemoveFeetMap}
+                            >
+                              <RotateCcw size={14} /> Restaurar Padrão
+                            </button>
+                          )}
+                        </div>
+
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
+                          Formatos suportados: <strong>PNG, JPG, JPEG ou WEBP</strong> (até 10MB). Recomendamos imagem nítida com fundo branco.
+                        </div>
+                      </div>
+                    </div>
                   </>
                 )}
 
@@ -961,8 +1403,28 @@ export default function DashboardScreen(): React.JSX.Element {
                     <div className="modal-section">
                       <div className="modal-section-title">Credenciais Google Cloud</div>
                       <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                        Para sincronizar com sua Google Agenda, insira suas credenciais da API do Google Console.
+                        Para sincronizar com sua Google Agenda, insira suas credenciais da API do Google Console ou importe o arquivo <code>credentials.json</code>.
                       </p>
+
+                      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
+                        <button 
+                          className="btn btn-secondary" 
+                          type="button" 
+                          onClick={handleImportGoogleCredentials}
+                          style={{ flex: 1, fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}
+                        >
+                          <Upload size={14} /> Importar credentials.json
+                        </button>
+                        <button 
+                          className="btn btn-secondary" 
+                          type="button" 
+                          onClick={() => window.api.openExternalBrowser('https://console.cloud.google.com/apis/credentials')}
+                          style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                          title="Abrir Google Cloud Console"
+                        >
+                          <ExternalLink size={14} /> Google Cloud Console
+                        </button>
+                      </div>
 
                       <div className="form-group" style={{ margin: 0 }}>
                         <label className="form-label" style={{ fontSize: '0.8rem', marginBottom: '0.25rem' }}>Client ID</label>
@@ -1005,7 +1467,9 @@ export default function DashboardScreen(): React.JSX.Element {
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '0.25rem 0' }}>
                         <span className={`bot-status-dot ${googleIsAuthenticated ? 'connected' : 'disconnected'}`} />
                         <span style={{ fontWeight: 500, fontSize: '0.88rem' }}>
-                          {googleIsAuthenticated ? 'Conectado com o Google Agenda' : 'Não autenticado'}
+                          {googleIsAuthenticated 
+                            ? `Conectado com o Google Agenda ${googleAccountEmail ? `(${googleAccountEmail})` : ''}` 
+                            : 'Não autenticado'}
                         </span>
                       </div>
 
@@ -1063,39 +1527,39 @@ export default function DashboardScreen(): React.JSX.Element {
                     </div>
 
                     <div className="modal-section">
-                      <div className="modal-section-title">Gerar Backup Completo</div>
+                      <div className="modal-section-title">Gerar Backup Criptografado (.zip.gcm)</div>
                       <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
-                        Gera um arquivo `.zip` com todos os dados e fotos dos pacientes para você salvar no computador ou importar no Google Drive.
+                        Gera um arquivo de backup ultra-seguro (AES-256-GCM) protegido por senha.
                       </p>
-                      {lastBackupDate && (
-                        <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
-                          Último backup realizado: <strong>{format(new Date(lastBackupDate), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}</strong>
-                        </p>
-                      )}
                       
-                      <button
-                        className="btn btn-primary"
-                        onClick={handleBackup}
-                        disabled={backupLoading}
-                        style={{ width: '100%', fontSize: '0.85rem' }}
-                      >
-                        {backupLoading ? 'Compactando arquivos...' : (
-                          <><Download size={14} style={{ marginRight: '0.25rem' }} /> Fazer Backup do Sistema</>
-                        )}
-                      </button>
-
-                      {backupSuccessPath && (
-                        <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: 'var(--success-color)', color: '#fff', borderRadius: 'var(--radius)', fontSize: '0.8rem' }}>
-                          <strong>✓ Backup criado!</strong><br />
-                          Salvo em: <span style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>{backupSuccessPath}</span>
-                        </div>
-                      )}
-                      
-                      {backupError && (
-                        <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: 'var(--danger-color)', color: '#fff', borderRadius: 'var(--radius)', fontSize: '0.8rem' }}>
-                          Erro ao criar backup: {backupError}
-                        </div>
-                      )}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                        <input
+                          type="password"
+                          className="form-control"
+                          placeholder="Digite uma senha para proteger o backup"
+                          id="backup-password-input"
+                          style={{ marginBottom: '0.5rem' }}
+                        />
+                        <button
+                          className="btn btn-primary"
+                          onClick={async () => {
+                            const pwdInput = document.getElementById('backup-password-input') as HTMLInputElement
+                            const pwd = pwdInput?.value
+                            if (!pwd || pwd.length < 4) {
+                              alert('Por favor, digite uma senha de pelo menos 4 caracteres.')
+                              return
+                            }
+                            const success = await window.api.exportEncryptedBackup(pwd)
+                            if (success) {
+                              alert('Backup criptografado exportado com sucesso!')
+                              if (pwdInput) pwdInput.value = ''
+                            }
+                          }}
+                          style={{ width: '100%', fontSize: '0.85rem' }}
+                        >
+                          <Download size={14} style={{ marginRight: '0.25rem' }} /> Exportar Backup Criptografado
+                        </button>
+                      </div>
                     </div>
 
                     <div className="modal-section" style={{ marginTop: '1rem' }}>
@@ -1225,6 +1689,53 @@ export default function DashboardScreen(): React.JSX.Element {
                     ) : (
                       <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Nenhum dado encontrado.</p>
                     )}
+                  </div>
+                )}
+
+                {activeSettingsTab === 'security' && (
+                  <div className="modal-section">
+                    <div className="modal-section-title" style={{ color: 'var(--primary-color)' }}>Segurança e Auditoria</div>
+                    
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                      <div className="danger-zone-box" style={{ borderColor: 'var(--accent-color)' }}>
+                        <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem', color: 'var(--accent-color)' }}>Bloqueio de Sessão</h4>
+                        <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                          O sistema é bloqueado automaticamente após 15 minutos de inatividade. Você também pode bloquear imediatamente.
+                        </p>
+                        <button
+                          className="btn btn-secondary"
+                          onClick={() => window.api.lockSession()}
+                          style={{ marginTop: '0.75rem', fontSize: '0.85rem' }}
+                        >
+                          <Shield size={14} style={{ marginRight: '0.25rem' }} /> Bloquear Sessão Agora
+                        </button>
+                      </div>
+
+                      <div style={{ background: 'rgba(14, 145, 168, 0.05)', borderRadius: 'var(--radius)', padding: '1rem' }}>
+                        <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem' }}>Logs de Auditoria</h4>
+                        <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+                          Histórico de ações críticas do sistema. Apenas usuários administradores podem visualizar.
+                        </p>
+                        <button
+                          className="btn btn-secondary"
+                          onClick={async () => {
+                            const logs = await window.api.getAuditLogs()
+                            const win = window.open('', '_blank')
+                            if (win) {
+                              win.document.write('<html><head><title>Logs de Auditoria</title><style>body { font-family: monospace; padding: 20px; background: #111; color: #0f0; } table { width: 100%; border-collapse: collapse; } th, td { padding: 8px; border: 1px solid #333; text-align: left; }</style></head><body>')
+                              win.document.write('<h2>Registro de Auditoria (Podonly)</h2><table><tr><th>ID</th><th>Ator</th><th>Ação</th><th>Alvo</th><th>Detalhes</th><th>Data/Hora</th></tr>')
+                              logs.forEach((log: any) => {
+                                win.document.write(`<tr><td>${log.id}</td><td>${log.actor}</td><td>${log.action}</td><td>${log.target || '-'}</td><td>${log.details || '-'}</td><td>${new Date(log.timestamp).toLocaleString()}</td></tr>`)
+                              })
+                              win.document.write('</table></body></html>')
+                            }
+                          }}
+                          style={{ fontSize: '0.85rem' }}
+                        >
+                          Visualizar Logs de Auditoria
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
