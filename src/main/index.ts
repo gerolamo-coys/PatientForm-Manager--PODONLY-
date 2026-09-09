@@ -7,7 +7,7 @@
  * Desenvolvido como parte do prontuário digital para podologia Podonly.
  */
 
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, Menu, MenuItem, session } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -28,7 +28,61 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: true,
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      spellcheck: true
+    }
+  })
+
+  // Configura idioma do corretor ortográfico nativo do Chromium para Português do Brasil
+  session.defaultSession.setSpellCheckerLanguages(['pt-BR'])
+
+  // Menu de contexto com sugestões de correção ortográfica e ações de edição
+  mainWindow.webContents.on('context-menu', (_event, params) => {
+    const menu = new Menu()
+
+    // Se houver uma palavra com erro ortográfico selecionada
+    if (params.misspelledWord) {
+      if (params.dictionarySuggestions && params.dictionarySuggestions.length > 0) {
+        for (const suggestion of params.dictionarySuggestions) {
+          menu.append(
+            new MenuItem({
+              label: suggestion,
+              click: () => mainWindow.webContents.replaceMisspelling(suggestion)
+            })
+          )
+        }
+      } else {
+        menu.append(
+          new MenuItem({
+            label: 'Nenhuma sugestão encontrada',
+            enabled: false
+          })
+        )
+      }
+
+      menu.append(new MenuItem({ type: 'separator' }))
+      menu.append(
+        new MenuItem({
+          label: `Adicionar "${params.misspelledWord}" ao dicionário`,
+          click: () => mainWindow.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord)
+        })
+      )
+      menu.append(new MenuItem({ type: 'separator' }))
+    }
+
+    // Adiciona opções de edição se for campo de texto ou se houver texto selecionado
+    if (params.isEditable) {
+      menu.append(new MenuItem({ role: 'undo', label: 'Desfazer' }))
+      menu.append(new MenuItem({ role: 'redo', label: 'Refazer' }))
+      menu.append(new MenuItem({ type: 'separator' }))
+      menu.append(new MenuItem({ role: 'cut', label: 'Recortar' }))
+      menu.append(new MenuItem({ role: 'copy', label: 'Copiar' }))
+      menu.append(new MenuItem({ role: 'paste', label: 'Colar' }))
+      menu.append(new MenuItem({ role: 'selectAll', label: 'Selecionar tudo' }))
+      menu.popup()
+    } else if (params.selectionText && params.selectionText.trim().length > 0) {
+      menu.append(new MenuItem({ role: 'copy', label: 'Copiar' }))
+      menu.popup()
     }
   })
 

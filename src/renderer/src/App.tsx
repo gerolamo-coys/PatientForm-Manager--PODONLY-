@@ -157,6 +157,169 @@ function AutoCapitalizeManager() {
   return null
 }
 
+/**
+ * Dicionário de auto-correção para palavras sem acento e erros frequentes em PT-BR
+ */
+const PT_BR_AUTOCORRECT_DICT: Record<string, string> = {
+  nao: 'não',
+  voce: 'você',
+  voces: 'vocês',
+  tambem: 'também',
+  ate: 'até',
+  esta: 'está',
+  estao: 'estão',
+  sao: 'são',
+  ja: 'já',
+  la: 'lá',
+  entao: 'então',
+  pagina: 'página',
+  historico: 'histórico',
+  clinica: 'clínica',
+  anatomico: 'anatômico',
+  saude: 'saúde',
+  diagnostico: 'diagnóstico',
+  evolucao: 'evolução',
+  pressao: 'pressão',
+  prescricao: 'prescrição',
+  observacao: 'observação',
+  observacoes: 'observações',
+  sessao: 'sessão',
+  sessoes: 'sessões',
+  relatorio: 'relatório',
+  medico: 'médico',
+  numero: 'número',
+  duvida: 'dúvida',
+  rapido: 'rápido',
+  facil: 'fácil',
+  dificil: 'difícil',
+  proximo: 'próximo',
+  proxima: 'próxima',
+  ultimo: 'último',
+  ultima: 'última',
+  inicio: 'início',
+  horario: 'horário',
+  periodo: 'período',
+  condicao: 'condição',
+  alteracao: 'alteração',
+  localizacao: 'localização',
+  avaliacao: 'avaliação',
+  notificacao: 'notificação',
+  confirmacao: 'confirmação',
+  informacao: 'informação',
+  informacoes: 'informações',
+  pacientte: 'paciente',
+  onicocriptose: 'onicocriptose'
+}
+
+/**
+ * Aplica a caixa original da palavra (maiúscula, título ou minúscula) à correção
+ */
+function preserveCasing(original: string, replacement: string): string {
+  if (original === original.toUpperCase()) {
+    return replacement.toUpperCase()
+  }
+  if (original.charAt(0) === original.charAt(0).toUpperCase()) {
+    return replacement.charAt(0).toUpperCase() + replacement.slice(1)
+  }
+  return replacement
+}
+
+/**
+ * Gerenciador de auto-correção em Português do Brasil:
+ * Corrige automaticamente acentuações e erros comuns ao pressionar espaço ou pontuação.
+ */
+function AutoCorrectManager() {
+  React.useEffect(() => {
+    let isEnabled = true
+
+    window.api.getSetting('auto_correct_portuguese').then(val => {
+      if (val !== null && val !== undefined && val !== '') {
+        isEnabled = val === 'true'
+      }
+    }).catch(console.error)
+
+    const handlePrefChange = (e: Event) => {
+      const customEvent = e as CustomEvent<{ enabled: boolean }>
+      if (customEvent.detail && typeof customEvent.detail.enabled === 'boolean') {
+        isEnabled = customEvent.detail.enabled
+      }
+    }
+
+    window.addEventListener('podonly-autocorrect-changed', handlePrefChange)
+
+    const handleBeforeInput = (e: InputEvent) => {
+      if (!isEnabled) return
+
+      const target = e.target as HTMLElement | null
+      if (!target) return
+
+      const isTextInput = target.tagName === 'INPUT' && (
+        (target as HTMLInputElement).type === 'text' ||
+        (target as HTMLInputElement).type === 'search' ||
+        !(target as HTMLInputElement).type
+      )
+      const isTextArea = target.tagName === 'TEXTAREA'
+
+      if (!isTextInput && !isTextArea) return
+
+      const inputElem = target as HTMLInputElement | HTMLTextAreaElement
+      if (inputElem.readOnly || inputElem.disabled) return
+
+      const triggerChar = e.data
+      const isSpaceOrPunctuation = triggerChar && /^[\s.,!?;:]$/.test(triggerChar)
+      if (!isSpaceOrPunctuation && e.inputType !== 'insertLineBreak') return
+
+      const start = inputElem.selectionStart ?? 0
+      const val = inputElem.value
+
+      const textBefore = val.slice(0, start)
+      const match = textBefore.match(/([a-zA-ZáàâãéèêíïóôõöúçÑñÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇ]+)$/)
+      if (!match) return
+
+      const rawWord = match[1]
+      const lowerWord = rawWord.toLowerCase()
+      const replacementTarget = PT_BR_AUTOCORRECT_DICT[lowerWord]
+
+      if (replacementTarget && lowerWord !== replacementTarget.toLowerCase()) {
+        const correctedWord = preserveCasing(rawWord, replacementTarget)
+        const wordStart = start - rawWord.length
+        const end = inputElem.selectionEnd ?? start
+        const textToInsert = correctedWord + (triggerChar ?? '\n')
+
+        e.preventDefault()
+
+        // Seleciona a palavra anterior a ser substituída + insere palavra corrigida com o caractere acionador
+        inputElem.setSelectionRange(wordStart, end)
+
+        if (typeof document.execCommand === 'function' && document.execCommand('insertText', false, textToInsert)) {
+          // Inserido com sucesso via execCommand
+        } else {
+          const nextVal = val.slice(0, wordStart) + textToInsert + val.slice(end)
+          const proto = target.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype
+          const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set
+          if (nativeSetter) {
+            nativeSetter.call(inputElem, nextVal)
+          } else {
+            inputElem.value = nextVal
+          }
+          const newCaretPos = wordStart + textToInsert.length
+          inputElem.setSelectionRange(newCaretPos, newCaretPos)
+          inputElem.dispatchEvent(new Event('input', { bubbles: true }))
+        }
+      }
+    }
+
+    document.addEventListener('beforeinput', handleBeforeInput as EventListener, true)
+
+    return () => {
+      window.removeEventListener('podonly-autocorrect-changed', handlePrefChange)
+      document.removeEventListener('beforeinput', handleBeforeInput as EventListener, true)
+    }
+  }, [])
+
+  return null
+}
+
 function NavigationSwitch() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -253,6 +416,7 @@ function AppContent(): React.JSX.Element {
   return (
     <>
       <AutoCapitalizeManager />
+      <AutoCorrectManager />
       <div className="ambient-background">
         <div className="blob blob-1"></div>
         <div className="blob blob-2"></div>

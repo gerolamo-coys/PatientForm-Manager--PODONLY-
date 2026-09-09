@@ -72,6 +72,7 @@ export default function DashboardScreen(): React.JSX.Element {
   const [defaultDuration, setDefaultDuration] = useState('60')
   const [customFeetMap, setCustomFeetMap] = useState<string | null>(null)
   const [autoCapitalizeFirstLetter, setAutoCapitalizeFirstLetter] = useState(true)
+  const [autoCorrectPortuguese, setAutoCorrectPortuguese] = useState(true)
 
   // Google settings states
   const [googleClientId, setGoogleClientId] = useState('')
@@ -139,16 +140,18 @@ export default function DashboardScreen(): React.JSX.Element {
         window.api.getSetting('profile_clinic_phone'),
         window.api.getSetting('default_appointment_duration'),
         window.api.getSetting('auto_capitalize_first_letter'),
+        window.api.getSetting('auto_correct_portuguese'),
         window.api.getSetting('google_client_id'),
         window.api.getSetting('google_client_secret'),
         window.api.getGoogleStatus()
-      ]).then(([prof, clinic, addr, phone, duration, autoCap, gClientId, gClientSecret, gStatus]) => {
+      ]).then(([prof, clinic, addr, phone, duration, autoCap, autoCorr, gClientId, gClientSecret, gStatus]) => {
         setProfName(prof || '')
         setClinicName(clinic || '')
         setClinicAddress(addr || '')
         setClinicPhone(phone || '')
         setDefaultDuration(duration || '60')
         setAutoCapitalizeFirstLetter(autoCap === null || autoCap === undefined || autoCap === '' ? true : autoCap === 'true')
+        setAutoCorrectPortuguese(autoCorr === null || autoCorr === undefined || autoCorr === '' ? true : autoCorr === 'true')
         setGoogleClientId(gClientId || '')
         setGoogleClientSecret(gClientSecret || '')
         setGoogleIsAuthenticated(Boolean(gStatus?.isConnected))
@@ -346,8 +349,10 @@ export default function DashboardScreen(): React.JSX.Element {
     try {
       await window.api.setSetting('default_appointment_duration', defaultDuration)
       await window.api.setSetting('auto_capitalize_first_letter', autoCapitalizeFirstLetter ? 'true' : 'false')
-      // Dispatch custom event to notify all windows/inputs immediately
+      await window.api.setSetting('auto_correct_portuguese', autoCorrectPortuguese ? 'true' : 'false')
+      // Dispatch custom events to notify all windows/inputs immediately
       window.dispatchEvent(new CustomEvent('podonly-autocapitalize-changed', { detail: { enabled: autoCapitalizeFirstLetter } }))
+      window.dispatchEvent(new CustomEvent('podonly-autocorrect-changed', { detail: { enabled: autoCorrectPortuguese } }))
       setSaveSuccess(true)
       setTimeout(() => setSaveSuccess(false), 3000)
     } catch (err) {
@@ -361,6 +366,17 @@ export default function DashboardScreen(): React.JSX.Element {
     try {
       await window.api.setSetting('auto_capitalize_first_letter', nextVal ? 'true' : 'false')
       window.dispatchEvent(new CustomEvent('podonly-autocapitalize-changed', { detail: { enabled: nextVal } }))
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const handleToggleAutoCorrect = async () => {
+    const nextVal = !autoCorrectPortuguese
+    setAutoCorrectPortuguese(nextVal)
+    try {
+      await window.api.setSetting('auto_correct_portuguese', nextVal ? 'true' : 'false')
+      window.dispatchEvent(new CustomEvent('podonly-autocorrect-changed', { detail: { enabled: nextVal } }))
     } catch (err) {
       console.error(err)
     }
@@ -1192,6 +1208,26 @@ export default function DashboardScreen(): React.JSX.Element {
                         </div>
 
                         <div className={`toggle-switch-track ${autoCapitalizeFirstLetter ? 'active' : ''}`}>
+                          <div className="toggle-switch-thumb" />
+                        </div>
+                      </div>
+
+                      {/* Auto-Correção em Português (pt-BR) Switch */}
+                      <div
+                        className="toggle-switch-wrapper"
+                        onClick={handleToggleAutoCorrect}
+                        style={{ marginTop: '0.75rem' }}
+                      >
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', paddingRight: '1rem' }}>
+                          <span style={{ fontWeight: 600, fontSize: '0.86rem', color: 'var(--text-primary)' }}>
+                            Auto-Correção em Português (pt-BR)
+                          </span>
+                          <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                            Aplica automaticamente acentos em palavras comuns (ex: nao $\rightarrow$ não, voce $\rightarrow$ você) e corrige erros de digitação ao pressionar Espaço ou pontuação.
+                          </span>
+                        </div>
+
+                        <div className={`toggle-switch-track ${autoCorrectPortuguese ? 'active' : ''}`}>
                           <div className="toggle-switch-thumb" />
                         </div>
                       </div>
