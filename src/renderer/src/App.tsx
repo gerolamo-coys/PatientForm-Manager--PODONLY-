@@ -17,6 +17,7 @@ import ActivationScreen from './screens/ActivationScreen'
 import FinancialScreen from './screens/FinancialScreen'
 import LockScreen from './screens/LockScreen'
 import { ArrowLeft } from 'lucide-react'
+import { getPortugueseCorrection } from './utils/ptBrDictionary'
 import './assets/main.css'
 
 function SessionGuard({ children }: { children: React.ReactNode }) {
@@ -158,75 +159,9 @@ function AutoCapitalizeManager() {
 }
 
 /**
- * Dicionário de auto-correção para palavras sem acento e erros frequentes em PT-BR
- */
-const PT_BR_AUTOCORRECT_DICT: Record<string, string> = {
-  nao: 'não',
-  voce: 'você',
-  voces: 'vocês',
-  tambem: 'também',
-  ate: 'até',
-  esta: 'está',
-  estao: 'estão',
-  sao: 'são',
-  ja: 'já',
-  la: 'lá',
-  entao: 'então',
-  pagina: 'página',
-  historico: 'histórico',
-  clinica: 'clínica',
-  anatomico: 'anatômico',
-  saude: 'saúde',
-  diagnostico: 'diagnóstico',
-  evolucao: 'evolução',
-  pressao: 'pressão',
-  prescricao: 'prescrição',
-  observacao: 'observação',
-  observacoes: 'observações',
-  sessao: 'sessão',
-  sessoes: 'sessões',
-  relatorio: 'relatório',
-  medico: 'médico',
-  numero: 'número',
-  duvida: 'dúvida',
-  rapido: 'rápido',
-  facil: 'fácil',
-  dificil: 'difícil',
-  proximo: 'próximo',
-  proxima: 'próxima',
-  ultimo: 'último',
-  ultima: 'última',
-  inicio: 'início',
-  horario: 'horário',
-  periodo: 'período',
-  condicao: 'condição',
-  alteracao: 'alteração',
-  localizacao: 'localização',
-  avaliacao: 'avaliação',
-  notificacao: 'notificação',
-  confirmacao: 'confirmação',
-  informacao: 'informação',
-  informacoes: 'informações',
-  pacientte: 'paciente',
-  onicocriptose: 'onicocriptose'
-}
-
-/**
- * Aplica a caixa original da palavra (maiúscula, título ou minúscula) à correção
- */
-function preserveCasing(original: string, replacement: string): string {
-  if (original === original.toUpperCase()) {
-    return replacement.toUpperCase()
-  }
-  if (original.charAt(0) === original.charAt(0).toUpperCase()) {
-    return replacement.charAt(0).toUpperCase() + replacement.slice(1)
-  }
-  return replacement
-}
-
-/**
  * Gerenciador de auto-correção em Português do Brasil:
- * Corrige automaticamente acentuações e erros comuns ao pressionar espaço ou pontuação.
+ * Corrige automaticamente acentuações e erros comuns ao pressionar espaço ou pontuação
+ * utilizando o dicionário de regras gramaticais de sufixos em Português.
  */
 function AutoCorrectManager() {
   React.useEffect(() => {
@@ -277,11 +212,9 @@ function AutoCorrectManager() {
       if (!match) return
 
       const rawWord = match[1]
-      const lowerWord = rawWord.toLowerCase()
-      const replacementTarget = PT_BR_AUTOCORRECT_DICT[lowerWord]
+      const correctedWord = getPortugueseCorrection(rawWord)
 
-      if (replacementTarget && lowerWord !== replacementTarget.toLowerCase()) {
-        const correctedWord = preserveCasing(rawWord, replacementTarget)
+      if (correctedWord && correctedWord !== rawWord) {
         const wordStart = start - rawWord.length
         const end = inputElem.selectionEnd ?? start
         const textToInsert = correctedWord + (triggerChar ?? '\n')
