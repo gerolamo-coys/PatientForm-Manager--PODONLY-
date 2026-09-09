@@ -34,6 +34,9 @@ export interface PodiatryHistoryForm {
 }
 
 export interface PatientListItem extends Patient {
+  forms_count?: number
+  has_pending_form?: boolean
+  last_visit_date?: string | null
 }
 
 export interface PatientWithForm {

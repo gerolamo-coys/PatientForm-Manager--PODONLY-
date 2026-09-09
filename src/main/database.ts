@@ -167,22 +167,51 @@ export function initDatabase() {
 }
 
 export function listPatients(sortMode: SortMode, searchQuery: string): PatientListItem[] {
-  let query = `SELECT * FROM patients`
+  let query = `
+    SELECT 
+      p.*,
+      COALESCE(f_agg.forms_count, 0) AS forms_count,
+      f_agg.last_visit_date,
+      CASE 
+        WHEN COALESCE(f_agg.forms_count, 0) = 0 THEN 1
+        WHEN (
+          (f_latest.chief_complaint IS NULL OR TRIM(f_latest.chief_complaint) = '') AND
+          (f_latest.procedures_performed IS NULL OR TRIM(f_latest.procedures_performed) = '')
+        ) THEN 1
+        ELSE 0
+      END AS has_pending_form
+    FROM patients p
+    LEFT JOIN (
+      SELECT 
+        patient_id, 
+        COUNT(*) AS forms_count,
+        MAX(visit_date) AS last_visit_date,
+        MAX(id) AS latest_form_id
+      FROM podiatry_history_forms
+      GROUP BY patient_id
+    ) f_agg ON p.id = f_agg.patient_id
+    LEFT JOIN podiatry_history_forms f_latest ON f_latest.id = f_agg.latest_form_id
+  `
   const params: any[] = []
 
   if (searchQuery) {
-    query += ` WHERE first_name LIKE ? OR last_name LIKE ?`
+    query += ` WHERE p.first_name LIKE ? OR p.last_name LIKE ?`
     params.push(`%${searchQuery}%`, `%${searchQuery}%`)
   }
 
   if (sortMode === 'alphabetical') {
-    query += ` ORDER BY first_name ASC, last_name ASC`
+    query += ` ORDER BY p.first_name ASC, p.last_name ASC`
   } else if (sortMode === 'last_created') {
-    query += ` ORDER BY created_at DESC`
+    query += ` ORDER BY p.created_at DESC`
   }
 
   const stmt = db.prepare(query)
-  return stmt.all(...params) as PatientListItem[]
+  const rows = stmt.all(...params) as any[]
+  return rows.map(r => ({
+    ...r,
+    has_pending_form: Boolean(r.has_pending_form),
+    forms_count: Number(r.forms_count || 0)
+  })) as PatientListItem[]
 }
 
 export function getPatientWithForm(patientId: number): PatientWithForm {
