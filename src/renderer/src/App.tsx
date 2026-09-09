@@ -61,6 +61,102 @@ function SessionGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+/**
+ * Gerenciador global de capitalização automática:
+ * Garante que a primeira letra de campos de texto ou após pontuações (., !, ?) seja maiúscula
+ * sem que o usuário precise pressionar Caps Lock, respeitando a preferência configurada.
+ */
+function AutoCapitalizeManager() {
+  React.useEffect(() => {
+    let isEnabled = true
+
+    // Carrega preferência inicial
+    window.api.getSetting('auto_capitalize_first_letter').then(val => {
+      if (val !== null && val !== undefined && val !== '') {
+        isEnabled = val === 'true'
+      }
+    }).catch(console.error)
+
+    // Ouve alterações no toggle das configurações
+    const handlePrefChange = (e: Event) => {
+      const customEvent = e as CustomEvent<{ enabled: boolean }>
+      if (customEvent.detail && typeof customEvent.detail.enabled === 'boolean') {
+        isEnabled = customEvent.detail.enabled
+      }
+    }
+
+    window.addEventListener('podonly-autocapitalize-changed', handlePrefChange)
+
+    // Intercepta input para capitalizar primeira letra do campo ou após ponto final
+    const handleBeforeInput = (e: InputEvent) => {
+      if (!isEnabled) return
+
+      const target = e.target as HTMLElement | null
+      if (!target) return
+
+      const isTextInput = target.tagName === 'INPUT' && (
+        (target as HTMLInputElement).type === 'text' ||
+        (target as HTMLInputElement).type === 'search' ||
+        !(target as HTMLInputElement).type
+      )
+      const isTextArea = target.tagName === 'TEXTAREA'
+
+      if (!isTextInput && !isTextArea) return
+
+      const inputElem = target as HTMLInputElement | HTMLTextAreaElement
+      if (inputElem.readOnly || inputElem.disabled) return
+
+      // Apenas intercepta inserção de texto único (caractere digitado)
+      if (e.inputType !== 'insertText' || !e.data || e.data.length !== 1) return
+
+      const char = e.data
+      // Se não for letra minúscula, ignora
+      if (char.toLowerCase() === char.toUpperCase()) return
+
+      const start = inputElem.selectionStart ?? 0
+      const val = inputElem.value
+
+      // Verifica se estamos no início do campo ou após pontuação (. ! ? ou quebra de linha)
+      const textBefore = val.slice(0, start)
+      const shouldCapitalize =
+        textBefore.trim().length === 0 || // Início do campo ou só espaços
+        /(?:[.!?]\s*|\n\s*)$/.test(textBefore) // Logo após pontuação final ou quebra de linha
+
+      if (shouldCapitalize && char !== char.toUpperCase()) {
+        e.preventDefault()
+        const upperChar = char.toUpperCase()
+        const end = inputElem.selectionEnd ?? start
+
+        // Insere caractere maiúsculo respeitando histórico de undo nativo quando possível
+        if (typeof document.execCommand === 'function' && document.execCommand('insertText', false, upperChar)) {
+          // Inserido com sucesso via execCommand
+        } else {
+          // Fallback manual compatível com componentes controlados do React
+          const nextVal = val.slice(0, start) + upperChar + val.slice(end)
+          const proto = target.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype
+          const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set
+          if (nativeSetter) {
+            nativeSetter.call(inputElem, nextVal)
+          } else {
+            inputElem.value = nextVal
+          }
+          inputElem.setSelectionRange(start + 1, start + 1)
+          inputElem.dispatchEvent(new Event('input', { bubbles: true }))
+        }
+      }
+    }
+
+    document.addEventListener('beforeinput', handleBeforeInput as EventListener, true)
+
+    return () => {
+      window.removeEventListener('podonly-autocapitalize-changed', handlePrefChange)
+      document.removeEventListener('beforeinput', handleBeforeInput as EventListener, true)
+    }
+  }, [])
+
+  return null
+}
+
 function NavigationSwitch() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -156,6 +252,7 @@ function AppContent(): React.JSX.Element {
 
   return (
     <>
+      <AutoCapitalizeManager />
       <div className="ambient-background">
         <div className="blob blob-1"></div>
         <div className="blob blob-2"></div>

@@ -71,6 +71,7 @@ export default function DashboardScreen(): React.JSX.Element {
   // Preferences settings states
   const [defaultDuration, setDefaultDuration] = useState('60')
   const [customFeetMap, setCustomFeetMap] = useState<string | null>(null)
+  const [autoCapitalizeFirstLetter, setAutoCapitalizeFirstLetter] = useState(true)
 
   // Google settings states
   const [googleClientId, setGoogleClientId] = useState('')
@@ -137,15 +138,17 @@ export default function DashboardScreen(): React.JSX.Element {
         window.api.getSetting('profile_clinic_address'),
         window.api.getSetting('profile_clinic_phone'),
         window.api.getSetting('default_appointment_duration'),
+        window.api.getSetting('auto_capitalize_first_letter'),
         window.api.getSetting('google_client_id'),
         window.api.getSetting('google_client_secret'),
         window.api.getGoogleStatus()
-      ]).then(([prof, clinic, addr, phone, duration, gClientId, gClientSecret, gStatus]) => {
+      ]).then(([prof, clinic, addr, phone, duration, autoCap, gClientId, gClientSecret, gStatus]) => {
         setProfName(prof || '')
         setClinicName(clinic || '')
         setClinicAddress(addr || '')
         setClinicPhone(phone || '')
         setDefaultDuration(duration || '60')
+        setAutoCapitalizeFirstLetter(autoCap === null || autoCap === undefined || autoCap === '' ? true : autoCap === 'true')
         setGoogleClientId(gClientId || '')
         setGoogleClientSecret(gClientSecret || '')
         setGoogleIsAuthenticated(Boolean(gStatus?.isConnected))
@@ -342,8 +345,22 @@ export default function DashboardScreen(): React.JSX.Element {
   const handleSavePreferences = async () => {
     try {
       await window.api.setSetting('default_appointment_duration', defaultDuration)
+      await window.api.setSetting('auto_capitalize_first_letter', autoCapitalizeFirstLetter ? 'true' : 'false')
+      // Dispatch custom event to notify all windows/inputs immediately
+      window.dispatchEvent(new CustomEvent('podonly-autocapitalize-changed', { detail: { enabled: autoCapitalizeFirstLetter } }))
       setSaveSuccess(true)
       setTimeout(() => setSaveSuccess(false), 3000)
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const handleToggleAutoCapitalize = async () => {
+    const nextVal = !autoCapitalizeFirstLetter
+    setAutoCapitalizeFirstLetter(nextVal)
+    try {
+      await window.api.setSetting('auto_capitalize_first_letter', nextVal ? 'true' : 'false')
+      window.dispatchEvent(new CustomEvent('podonly-autocapitalize-changed', { detail: { enabled: nextVal } }))
     } catch (err) {
       console.error(err)
     }
@@ -1157,6 +1174,26 @@ export default function DashboardScreen(): React.JSX.Element {
                           <option value="90">1 Hora e 30 Minutos</option>
                           <option value="120">2 Horas</option>
                         </select>
+                      </div>
+
+                      {/* Primeiras Letras em Maiúsculo (Caps Automático) Switch */}
+                      <div
+                        className="toggle-switch-wrapper"
+                        onClick={handleToggleAutoCapitalize}
+                        style={{ marginTop: '0.5rem' }}
+                      >
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', paddingRight: '1rem' }}>
+                          <span style={{ fontWeight: 600, fontSize: '0.86rem', color: 'var(--text-primary)' }}>
+                            Primeira Letra Maiúscula Automática (Auto Caps)
+                          </span>
+                          <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                            Inicia automaticamente campos e frases com letra maiúscula ao digitar, sem precisar pressionar Caps Lock ou Shift.
+                          </span>
+                        </div>
+
+                        <div className={`toggle-switch-track ${autoCapitalizeFirstLetter ? 'active' : ''}`}>
+                          <div className="toggle-switch-thumb" />
+                        </div>
                       </div>
 
                       <button className="btn btn-primary" onClick={handleSavePreferences} style={{ width: '100%', fontSize: '0.85rem', marginTop: '0.5rem' }}>
