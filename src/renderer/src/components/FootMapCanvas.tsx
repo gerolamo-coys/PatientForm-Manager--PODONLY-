@@ -454,7 +454,7 @@ export const FootMapCanvas: React.FC<FootMapCanvasProps> = ({
             type="button"
             className={`tool-btn ${activeSymbolId === sym.id ? 'active' : ''}`}
             onClick={() => handleSelectSymbol(sym)}
-            title={`${sym.label} (${sym.shape})`}
+            title={sym.label ? sym.label : `Demarcar (${sym.shape})`}
           >
             {renderShapeIcon(sym.shape, sym.defaultColor)}
           </button>
@@ -529,7 +529,7 @@ export const FootMapCanvas: React.FC<FootMapCanvasProps> = ({
               title={`Selecionar ${sym.label}`}
             >
               {renderShapeIcon(sym.shape, sym.defaultColor)}
-              <span>{sym.label}</span>
+              <span>{sym.label.trim() || '(Sem subtítulo)'}</span>
             </div>
           ))}
         </div>

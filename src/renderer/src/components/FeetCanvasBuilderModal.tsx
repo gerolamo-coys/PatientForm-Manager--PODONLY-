@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import {
   X,
   Palette,
@@ -113,8 +114,8 @@ export const FeetCanvasBuilderModal: React.FC<FeetCanvasBuilderModalProps> = ({
   const handleAddSymbol = () => {
     const newSym: ClinicalSymbolDef = {
       id: `sym_${Date.now()}`,
-      shape: 'pin',
-      label: 'Nova Patologia / Ponto',
+      shape: 'circle',
+      label: '',
       defaultColor: '#0e91a8'
     }
     setSymbols([...symbols, newSym])
@@ -328,7 +329,7 @@ export const FeetCanvasBuilderModal: React.FC<FeetCanvasBuilderModalProps> = ({
     }
   }
 
-  return (
+  return createPortal(
     <div className="feet-builder-modal-overlay" onClick={onClose}>
       <div className="feet-builder-modal" onClick={e => e.stopPropagation()}>
         {/* Header */}
@@ -674,7 +675,7 @@ export const FeetCanvasBuilderModal: React.FC<FeetCanvasBuilderModalProps> = ({
                   {symbols.map(sym => (
                     <div key={sym.id} className="feet-builder-legend-item">
                       {renderSymbolIcon(sym.shape, sym.defaultColor, 14)}
-                      <span>{sym.label}</span>
+                      <span>{sym.label.trim() || '(Sem subtítulo)'}</span>
                     </div>
                   ))}
                 </div>
@@ -712,13 +713,13 @@ export const FeetCanvasBuilderModal: React.FC<FeetCanvasBuilderModalProps> = ({
                       value={sym.shape}
                       onChange={e => handleUpdateSymbol(sym.id, { shape: e.target.value as ClinicalSymbolShape })}
                     >
+                      <option value="circle">Círculo</option>
+                      <option value="star">Estrela</option>
+                      <option value="square">Quadrado</option>
+                      <option value="triangle">Triângulo</option>
+                      <option value="diamond">Losango</option>
+                      <option value="plus">Cruz (+)</option>
                       <option value="pin">Marcador (Pin)</option>
-                      <option value="circle">Círculo (Calosidade)</option>
-                      <option value="star">Estrela (Verruga)</option>
-                      <option value="square">Quadrado (Queratose)</option>
-                      <option value="triangle">Triângulo (Trauma)</option>
-                      <option value="diamond">Losango (Micose)</option>
-                      <option value="plus">Cruz (Úlcera / Calo)</option>
                     </select>
 
                     <input
@@ -742,16 +743,16 @@ export const FeetCanvasBuilderModal: React.FC<FeetCanvasBuilderModalProps> = ({
                   </div>
 
                   <div>
-                    <label style={{ fontSize: '0.72rem', color: '#64748b', display: 'block', marginBottom: '2px', fontWeight: 600 }}>
-                      Legenda / Descrição Clínica:
+                    <label style={{ fontSize: '0.74rem', color: '#475569', display: 'block', marginBottom: '4px', fontWeight: 600 }}>
+                      Subtítulo / Descrição da Patologia:
                     </label>
                     <input
                       type="text"
                       className="form-control"
-                      style={{ fontSize: '0.82rem', padding: '0.4rem 0.6rem' }}
+                      style={{ fontSize: '0.84rem', padding: '0.45rem 0.65rem' }}
                       value={sym.label}
                       onChange={e => handleUpdateSymbol(sym.id, { label: e.target.value })}
-                      placeholder="Ex: Ponto de Pressão, Onicocriptose..."
+                      placeholder="Digite o subtítulo que desejar (ex: Onicocriptose, Calo, Dor...)"
                     />
                   </div>
                 </div>
@@ -806,7 +807,8 @@ export const FeetCanvasBuilderModal: React.FC<FeetCanvasBuilderModalProps> = ({
           </div>
         </div>
       )}
-    </div>
+    </div>,
+    document.body
   )
 }
 
