@@ -30,12 +30,14 @@ import {
   Trash2,
   Upload,
   RotateCcw,
-  ExternalLink
+  ExternalLink,
+  Sliders
 } from 'lucide-react'
 import { format, isFuture, differenceInMinutes, startOfDay, endOfDay, isBefore, startOfMonth, endOfMonth } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import type { FinancialSummary, AppointmentStatus } from '../../../shared/types'
 import feetMapDefaultImg from '../assets/feet-map.png'
+import FeetCanvasBuilderModal from '../components/FeetCanvasBuilderModal'
 
 
 export default function DashboardScreen(): React.JSX.Element {
@@ -71,6 +73,7 @@ export default function DashboardScreen(): React.JSX.Element {
   // Preferences settings states
   const [defaultDuration, setDefaultDuration] = useState('60')
   const [customFeetMap, setCustomFeetMap] = useState<string | null>(null)
+  const [showFeetBuilderModal, setShowFeetBuilderModal] = useState(false)
   const [autoCapitalizeFirstLetter, setAutoCapitalizeFirstLetter] = useState(true)
   const [autoCorrectPortuguese, setAutoCorrectPortuguese] = useState(true)
 
@@ -1299,6 +1302,22 @@ export default function DashboardScreen(): React.JSX.Element {
                           <button
                             type="button"
                             className="btn btn-primary"
+                            style={{
+                              fontSize: '0.82rem',
+                              padding: '0.45rem 1rem',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '0.4rem',
+                              background: 'linear-gradient(135deg, #0e91a8, #0d9488)',
+                              boxShadow: '0 2px 8px rgba(14, 145, 168, 0.25)'
+                            }}
+                            onClick={() => setShowFeetBuilderModal(true)}
+                          >
+                            <Sliders size={14} /> Construtor de Mapa Anatômico & Símbolos
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
                             style={{ fontSize: '0.82rem', padding: '0.45rem 1rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
                             onClick={handleImportFeetMap}
                           >
@@ -1816,6 +1835,16 @@ export default function DashboardScreen(): React.JSX.Element {
           </div>
         </div>,
         document.body
+      )}
+
+      {showFeetBuilderModal && (
+        <FeetCanvasBuilderModal
+          isOpen={showFeetBuilderModal}
+          onClose={() => setShowFeetBuilderModal(false)}
+          onTemplateSaved={() => {
+            window.api.getCustomFeetMapBase64().then(setCustomFeetMap).catch(console.error)
+          }}
+        />
       )}
     </div>
   )

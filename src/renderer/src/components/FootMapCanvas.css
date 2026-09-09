@@ -122,3 +122,66 @@
   touch-action: none;
   /* Prevent scrolling while drawing on mobile */
 }
+
+/* Dynamic Legend Box */
+.foot-map-legend-box {
+  width: 100%;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 0.85rem 1rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  box-sizing: border-box;
+}
+
+.foot-map-legend-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.6rem;
+}
+
+.foot-map-legend-title {
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #475569;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.foot-map-legend-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1.2rem;
+}
+
+.foot-map-legend-pill {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.78rem;
+  color: #334155;
+  padding: 0.3rem 0.6rem;
+  border-radius: 6px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.foot-map-legend-pill:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  transform: translateY(-1px);
+}
+
+.foot-map-legend-pill.active {
+  background: rgba(14, 145, 168, 0.1);
+  border-color: var(--accent-color, #0e91a8);
+  color: var(--accent-color, #0e91a8);
+  font-weight: 600;
+}

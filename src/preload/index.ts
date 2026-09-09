@@ -50,6 +50,7 @@ const api = {
   getClinicLogoBase64: () => ipcRenderer.invoke('getClinicLogoBase64'),
   deleteClinicLogo: () => ipcRenderer.invoke('deleteClinicLogo'),
   pickAndSaveCustomFeetMap: () => ipcRenderer.invoke('pickAndSaveCustomFeetMap'),
+  saveCustomFeetMapBase64: (base64Data: string) => ipcRenderer.invoke('saveCustomFeetMapBase64', base64Data),
   getCustomFeetMapBase64: () => ipcRenderer.invoke('getCustomFeetMapBase64'),
   deleteCustomFeetMap: () => ipcRenderer.invoke('deleteCustomFeetMap'),
   validateLicense: (key: string) => ipcRenderer.invoke('validateLicense', key),

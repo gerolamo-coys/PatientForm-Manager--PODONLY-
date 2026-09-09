@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Save, X, Activity, ClipboardList, AlertCircle, Map, User, FileText, Settings, Plus, Edit2, Trash2, RotateCcw, Copy, History, Sparkles, Printer } from 'lucide-react'
+import { Save, X, Activity, ClipboardList, AlertCircle, Map, User, FileText, Settings, Plus, Edit2, Trash2, RotateCcw, Copy, History, Sparkles, Printer, Sliders } from 'lucide-react'
 import FootMapCanvas from '../components/FootMapCanvas'
+import FeetCanvasBuilderModal from '../components/FeetCanvasBuilderModal'
 import { calculateAge } from '../utils/ageHelper'
 import type { Patient } from '../../../shared/types'
 import PrintDocumentModal from '../components/PrintDocumentModal'
@@ -52,6 +53,7 @@ export default function PatientForm() {
   const [activeSection, setActiveSection] = useState('dados')
   const [patient, setPatient] = useState<Patient | null>(null)
   const [showPrintModal, setShowPrintModal] = useState(false)
+  const [showFeetBuilderModal, setShowFeetBuilderModal] = useState(false)
 
   const sections = [
     { id: 'dados', title: 'Dados da Consulta', icon: User },
@@ -549,9 +551,29 @@ export default function PatientForm() {
             </section>
 
             <section id="mapa" ref={el => { sectionRefs.current[3] = el; }} className="glass-card" style={{ scrollMarginTop: '6rem' }}>
-              <h3 className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Map color="var(--success-color)" size={20} /> Mapa do Pé (Anotações)
-              </h3>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.85rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                <h3 className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
+                  <Map color="var(--success-color)" size={20} /> Mapa do Pé (Anotações Clínicas)
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowFeetBuilderModal(true)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--accent-color)',
+                    fontSize: '0.78rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.35rem'
+                  }}
+                  title="Personalizar Modelo dos Pés, Cores e Legendas"
+                >
+                  <Sliders size={13} /> Personalizar Diagrama & Legenda
+                </button>
+              </div>
               <div style={{ marginBottom: 0 }}>
                 <FootMapCanvas 
                   initialAnnotation={form.foot_map_image}
@@ -815,6 +837,13 @@ export default function PatientForm() {
           onClose={() => setShowPrintModal(false)}
         />,
         document.body
+      )}
+
+      {showFeetBuilderModal && (
+        <FeetCanvasBuilderModal
+          isOpen={showFeetBuilderModal}
+          onClose={() => setShowFeetBuilderModal(false)}
+        />
       )}
     </div>
   )

@@ -69,6 +69,7 @@ export interface IAPI {
   getClinicLogoBase64: () => Promise<string | null>
   deleteClinicLogo: () => Promise<boolean>
   pickAndSaveCustomFeetMap: () => Promise<string | null>
+  saveCustomFeetMapBase64: (base64Data: string) => Promise<boolean>
   getCustomFeetMapBase64: () => Promise<string | null>
   deleteCustomFeetMap: () => Promise<boolean>
   validateLicense: (key: string) => Promise<{ valid: boolean; error?: string }>

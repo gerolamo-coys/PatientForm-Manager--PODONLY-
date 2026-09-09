@@ -737,6 +737,25 @@ export function registerIpcHandlers() {
     }
   })
 
+  ipcMain.handle('saveCustomFeetMapBase64', async (_, base64Data: string) => {
+    if (!base64Data || typeof base64Data !== 'string') return false
+    try {
+      const match = base64Data.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/)
+      const buffer = match ? Buffer.from(match[2], 'base64') : Buffer.from(base64Data, 'base64')
+      const ext = match ? match[1] : 'png'
+      const fileName = `custom_feet_map.${ext}`
+      const targetDir = app.getPath('userData')
+      const targetPath = path.join(targetDir, fileName)
+
+      await fs.writeFile(targetPath, buffer)
+      setSetting('custom_feet_map_path', targetPath)
+      return true
+    } catch (err) {
+      console.error('Falha ao salvar mapa dos pés personalizado via base64:', err)
+      return false
+    }
+  })
+
   ipcMain.handle('deleteCustomFeetMap', async () => {
     const mapPath = getSetting('custom_feet_map_path')
     if (mapPath && typeof mapPath === 'string') {

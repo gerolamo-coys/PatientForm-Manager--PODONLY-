@@ -32,6 +32,20 @@ function formatDate(dateStr: string | null | undefined): string {
   }
 }
 
+function resolveFootMapImage(rawImage: string | null | undefined): string | null {
+  if (!rawImage) return null
+  const trimmed = rawImage.trim()
+  if (trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed)
+      return parsed.composite || parsed.drawing || null
+    } catch {
+      return null
+    }
+  }
+  return rawImage
+}
+
 function getBaseStyles(): string {
   return `
     <style>
@@ -554,12 +568,15 @@ export function generateConsultationHtml(
       </div>
 
       <!-- Foot Map Podogram (if available and requested) -->
-      ${includeFootMap && form.foot_map_image ? `
-        <div class="section-card foot-map-container">
-          <div class="section-title" style="text-align: left;">Podograma / Mapa das Lesões</div>
-          <img class="foot-map-img" src="${form.foot_map_image}" alt="Mapa do Pé" />
-        </div>
-      ` : ''}
+      ${(() => {
+        const resolvedMap = resolveFootMapImage(form.foot_map_image)
+        return includeFootMap && resolvedMap ? `
+          <div class="section-card foot-map-container">
+            <div class="section-title" style="text-align: left;">Podograma / Mapa das Lesões</div>
+            <img class="foot-map-img" src="${resolvedMap}" alt="Mapa do Pé" />
+          </div>
+        ` : ''
+      })()}
 
       <!-- Home Care & Prescription -->
       <div class="prescription-box">
