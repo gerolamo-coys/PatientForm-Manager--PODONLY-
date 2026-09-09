@@ -152,6 +152,10 @@ export default function CalendarScreen(): React.JSX.Element {
   const [endTime, setEndTime] = useState('')
   const [notes, setNotes] = useState('')
   const patientDropdownRef = useRef<HTMLDivElement>(null)
+  const isSyncingRef = useRef(false)
+  isSyncingRef.current = isSyncing
+  const isAuthenticatedRef = useRef(false)
+  isAuthenticatedRef.current = isAuthenticated
 
   useEffect(() => {
     loadAppointments()
@@ -177,7 +181,30 @@ export default function CalendarScreen(): React.JSX.Element {
     }
 
     window.addEventListener('trigger-calendar-sync', handleGlobalSync)
-    return () => window.removeEventListener('trigger-calendar-sync', handleGlobalSync)
+
+    // Sincronização automática ao focar na janela (ex: voltando do navegador Google Calendar)
+    let lastFocusSync = 0
+    const handleWindowFocus = () => {
+      const now = Date.now()
+      if (now - lastFocusSync > 5000 && isAuthenticatedRef.current && !isSyncingRef.current) {
+        lastFocusSync = now
+        handleSync(false)
+      }
+    }
+    window.addEventListener('focus', handleWindowFocus)
+
+    // Sincronização periódica suave em segundo plano a cada 60 segundos
+    const syncInterval = setInterval(() => {
+      if (isAuthenticatedRef.current && !isSyncingRef.current && navigator.onLine) {
+        handleSync(false)
+      }
+    }, 60000)
+
+    return () => {
+      window.removeEventListener('trigger-calendar-sync', handleGlobalSync)
+      window.removeEventListener('focus', handleWindowFocus)
+      clearInterval(syncInterval)
+    }
   }, [])
 
   // Close patient dropdown when clicking outside
@@ -218,7 +245,7 @@ export default function CalendarScreen(): React.JSX.Element {
 
   const loadAppointments = async () => {
     const appointments = await window.api.getAllAppointments()
-    setEvents(appointments.map(a => ({
+    const apptMap = appointments.map(a => ({
       ...a,
       start: new Date(a.start_time),
       end: new Date(a.end_time),
@@ -226,7 +253,17 @@ export default function CalendarScreen(): React.JSX.Element {
       status: a.status || 'SCHEDULED',
       service_type: a.service_type || null,
       price: a.price ?? null
-    })))
+    }))
+    setEvents(apptMap)
+
+    setSelectedEvent(prev => {
+      if (prev && !apptMap.some(e => e.id === prev.id)) {
+        setIsQuickViewOpen(false)
+        setIsModalOpen(false)
+        return null
+      }
+      return prev
+    })
   }
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {

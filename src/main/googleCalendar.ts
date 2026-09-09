@@ -142,15 +142,29 @@ export async function pullFromGoogleCalendar(): Promise<GoogleSyncResult> {
     // Fetch events from the last 60 days to future
     const timeMin = new Date()
     timeMin.setDate(timeMin.getDate() - 60)
+    const timeMinIso = timeMin.toISOString()
 
-    const response = await calendar.events.list({
-      calendarId: 'primary',
-      timeMin: timeMin.toISOString(),
-      singleEvents: true,
-      maxResults: 2500,
-    })
+    // Retrieve all events including deleted ones and handle pagination
+    let pageToken: string | undefined = undefined
+    const items: any[] = []
 
-    const items = response.data.items || []
+    do {
+      const response = await calendar.events.list({
+        calendarId: 'primary',
+        timeMin: timeMinIso,
+        singleEvents: true,
+        showDeleted: true,
+        maxResults: 2500,
+        pageToken
+      })
+
+      if (response.data.items) {
+        items.push(...response.data.items)
+      }
+
+      pageToken = (response.data.nextPageToken as string) || undefined
+    } while (pageToken)
+
     let processedCount = 0
 
     // Prepare patient lookup queries for smart matching
@@ -160,7 +174,7 @@ export async function pullFromGoogleCalendar(): Promise<GoogleSyncResult> {
       LIMIT 1
     `)
 
-    const allPatients = db.prepare('SELECT id, first_name, last_name, phone FROM patients').all() as Array<{
+    const allPatients = (db.prepare('SELECT id, first_name, last_name, phone FROM patients').all() || []) as Array<{
       id: number
       first_name: string
       last_name: string
@@ -171,78 +185,115 @@ export async function pullFromGoogleCalendar(): Promise<GoogleSyncResult> {
       const existingStmt = db.prepare('SELECT id, patient_id FROM appointments WHERE google_event_id = ?')
       const deleteStmt = db.prepare('DELETE FROM appointments WHERE id = ?')
 
+      // Track all active (non-cancelled) Google Event IDs in this sync window
+      const activeGoogleEventIds = new Set<string>()
+
       for (const item of eventsList) {
         if (!item.id) continue
+
+        const existing = existingStmt.get(item.id) as { id: number; patient_id: number | null } | undefined
+
+        // If Google reports the event as cancelled, delete from local DB immediately
+        if (item.status === 'cancelled') {
+          if (existing) {
+            deleteStmt.run(existing.id)
+            console.log(`[GoogleSync] Evento cancelado/excluído no Google removido do PodOnly: id=${existing.id}, google_event_id=${item.id}`)
+          }
+          continue
+        }
+
+        // Active event - record ID for orphan reconciliation
+        activeGoogleEventIds.add(item.id)
 
         // Parse start and end times (handling both dateTime and all-day date strings)
         let startTimeIso: string | null = null
         let endTimeIso: string | null = null
 
-        if (item.start?.dateTime && item.end?.dateTime) {
+        if (item.start?.dateTime) {
           startTimeIso = new Date(item.start.dateTime).toISOString()
-          endTimeIso = new Date(item.end.dateTime).toISOString()
         } else if (item.start?.date) {
           // All-day event: default from 08:00 to 18:00 on that day
           const startDate = item.start.date
           startTimeIso = new Date(`${startDate}T08:00:00`).toISOString()
-          endTimeIso = new Date(`${startDate}T18:00:00`).toISOString()
+        }
+
+        if (item.end?.dateTime) {
+          endTimeIso = new Date(item.end.dateTime).toISOString()
+        } else if (item.end?.date) {
+          const endDate = item.end.date
+          endTimeIso = new Date(`${endDate}T18:00:00`).toISOString()
         }
 
         if (!startTimeIso || !endTimeIso) continue
 
-        const existing = existingStmt.get(item.id) as { id: number; patient_id: number | null } | undefined
         const summary = (item.summary || '').trim() || 'Consulta (Google)'
 
-        if (item.status === 'cancelled') {
-          if (existing) {
-            deleteStmt.run(existing.id)
-          }
-        } else {
-          // Smart Patient Matching: try to associate with an existing patient
-          let matchedPatientId: number | null = existing?.patient_id || null
+        // Smart Patient Matching: try to associate with an existing patient
+        let matchedPatientId: number | null = existing?.patient_id || null
 
-          if (!matchedPatientId && summary) {
-            const directMatch = findPatientByNameStmt.get(summary) as { id: number } | undefined
-            if (directMatch) {
-              matchedPatientId = directMatch.id
-            } else {
-              // Check if any patient's name is in the summary or phone in the description
-              for (const p of allPatients) {
-                const fullName = `${p.first_name} ${p.last_name}`.trim().toLowerCase()
-                if (summary.toLowerCase().includes(fullName)) {
-                  matchedPatientId = p.id
-                  break
-                }
-                if (p.phone && item.description && item.description.includes(p.phone.replace(/\D/g, ''))) {
-                  matchedPatientId = p.id
-                  break
-                }
+        if (!matchedPatientId && summary) {
+          const directMatch = findPatientByNameStmt.get(summary) as { id: number } | undefined
+          if (directMatch) {
+            matchedPatientId = directMatch.id
+          } else {
+            // Check if any patient's name is in the summary or phone in the description
+            for (const p of allPatients) {
+              const fullName = `${p.first_name} ${p.last_name}`.trim().toLowerCase()
+              if (summary.toLowerCase().includes(fullName)) {
+                matchedPatientId = p.id
+                break
+              }
+              if (p.phone && item.description && item.description.includes(p.phone.replace(/\D/g, ''))) {
+                matchedPatientId = p.id
+                break
               }
             }
           }
+        }
 
-          if (existing) {
-            updateAppointment(existing.id, {
-              title: summary,
-              start_time: startTimeIso,
-              end_time: endTimeIso,
-              notes: item.description || null,
-              ...(matchedPatientId ? { patient_id: matchedPatientId } : {})
-            })
-          } else {
-            createAppointment({
-              patient_id: matchedPatientId,
-              title: summary,
-              start_time: startTimeIso,
-              end_time: endTimeIso,
-              notes: item.description || null,
-              google_event_id: item.id,
-              status: 'SCHEDULED',
-              service_type: null,
-              price: null
-            })
-          }
-          processedCount++
+        if (existing) {
+          updateAppointment(existing.id, {
+            title: summary,
+            start_time: startTimeIso,
+            end_time: endTimeIso,
+            notes: item.description || null,
+            ...(matchedPatientId ? { patient_id: matchedPatientId } : {})
+          })
+        } else {
+          createAppointment({
+            patient_id: matchedPatientId,
+            title: summary,
+            start_time: startTimeIso,
+            end_time: endTimeIso,
+            notes: item.description || null,
+            google_event_id: item.id,
+            status: 'SCHEDULED',
+            service_type: null,
+            price: null
+          })
+        }
+        processedCount++
+      }
+
+      // Reconciliation: Find all local appointments that have a google_event_id in the synced time window
+      // If their google_event_id is NOT present in activeGoogleEventIds, they were deleted on Google Calendar!
+      const localSyncedStmt = db.prepare(`
+        SELECT id, google_event_id, title 
+        FROM appointments 
+        WHERE google_event_id IS NOT NULL 
+          AND TRIM(google_event_id) != ''
+          AND start_time >= ?
+      `)
+      const localSyncedAppts = (localSyncedStmt.all(timeMinIso) || []) as Array<{
+        id: number
+        google_event_id: string
+        title: string
+      }>
+
+      for (const localAppt of localSyncedAppts) {
+        if (!activeGoogleEventIds.has(localAppt.google_event_id)) {
+          deleteStmt.run(localAppt.id)
+          console.log(`[GoogleSync] Evento órfão removido do PodOnly (excluído no Google Agenda): id=${localAppt.id}, google_event_id=${localAppt.google_event_id}, title=${localAppt.title}`)
         }
       }
     })
