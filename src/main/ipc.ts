@@ -222,6 +222,7 @@ export function registerIpcHandlers() {
     deleteGoogleTokens()
     setSetting('google_auth_tokens', '')
     setSetting('google_account_email', '')
+    cancelGoogleAuthentication()
     return true
   })
 
