@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Save, X, Activity, ClipboardList, AlertCircle, Map, User, FileText, Settings, Plus, Edit2, Trash2, RotateCcw, Copy, History, Sparkles, Printer, Sliders } from 'lucide-react'
+import { Save, X, Activity, ClipboardList, AlertCircle, Map, User, FileText, Settings, Plus, Edit2, Trash2, RotateCcw, Copy, History, Sparkles, Printer, Sliders, Check } from 'lucide-react'
 import FootMapCanvas from '../components/FootMapCanvas'
 import FeetCanvasBuilderModal from '../components/FeetCanvasBuilderModal'
 import { calculateAge } from '../utils/ageHelper'
@@ -30,6 +30,17 @@ const DEFAULT_HOME_CARE_TEMPLATES: HomeCareTemplate[] = [
     title: 'Onicocriptose',
     content: "Recomendações Home Care (Onicocriptose):\n- Evitar o uso de calçados de bico fino ou muito apertados.\n- Cortar as unhas de forma reta, sem arredondar os cantos.\n- Em caso de dor ou inflamação, retornar ao podólogo.\n- Não tentar desencravar em casa."
   }
+]
+
+export const DEFAULT_PROCEDURE_OPTIONS: string[] = [
+  'Podoprofilaxia',
+  'Laser PDT',
+  'Laser',
+  'Desbaste plantar',
+  'Desbaste ungueal',
+  'Retirada de espícula',
+  'Retirada de onicofose',
+  'Curativo'
 ]
 
 export default function PatientForm() {
@@ -164,6 +175,91 @@ export default function PatientForm() {
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null)
   const [templateTitle, setTemplateTitle] = useState('')
   const [templateContent, setTemplateContent] = useState('')
+
+  // Procedure Options state
+  const [procedureOptions, setProcedureOptions] = useState<string[]>(DEFAULT_PROCEDURE_OPTIONS)
+  const [showManageProceduresModal, setShowManageProceduresModal] = useState(false)
+  const [newProcedureInput, setNewProcedureInput] = useState('')
+
+  useEffect(() => {
+    const loadProcedures = async () => {
+      try {
+        const saved = await window.api.getSetting('custom_procedure_options')
+        if (saved) {
+          const parsed = JSON.parse(saved)
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setProcedureOptions(parsed)
+          }
+        }
+      } catch (err) {
+        console.error('Erro ao carregar opções de procedimentos:', err)
+      }
+    }
+    loadProcedures()
+  }, [])
+
+  const handleSaveProcedureOptions = async (updatedList: string[]) => {
+    setProcedureOptions(updatedList)
+    try {
+      await window.api.setSetting('custom_procedure_options', JSON.stringify(updatedList))
+    } catch (err) {
+      console.error('Erro ao salvar opções de procedimentos:', err)
+    }
+  }
+
+  const handleToggleProcedure = (proc: string) => {
+    const currentText = form.procedures_performed || ''
+    const items = currentText
+      .split(/[,;\n]+/)
+      .map(s => s.trim())
+      .filter(Boolean)
+
+    const lowerProc = proc.trim().toLowerCase()
+    const existingIdx = items.findIndex(item => item.toLowerCase() === lowerProc)
+
+    let newItems: string[]
+    if (existingIdx >= 0) {
+      newItems = items.filter((_, idx) => idx !== existingIdx)
+    } else {
+      newItems = [...items, proc]
+    }
+
+    setForm(prev => ({
+      ...prev,
+      procedures_performed: newItems.join(', ')
+    }))
+  }
+
+  const isProcSelected = (proc: string) => {
+    if (!form.procedures_performed) return false
+    const items = form.procedures_performed
+      .split(/[,;\n]+/)
+      .map(s => s.trim().toLowerCase())
+    return items.includes(proc.trim().toLowerCase())
+  }
+
+  const handleAddProcedureOption = () => {
+    const trimmed = newProcedureInput.trim()
+    if (!trimmed) return
+    if (procedureOptions.some(p => p.toLowerCase() === trimmed.toLowerCase())) {
+      alert('Este procedimento já está na lista.')
+      return
+    }
+    const updated = [...procedureOptions, trimmed]
+    handleSaveProcedureOptions(updated)
+    setNewProcedureInput('')
+  }
+
+  const handleDeleteProcedureOption = (procToDelete: string) => {
+    const updated = procedureOptions.filter(p => p !== procToDelete)
+    handleSaveProcedureOptions(updated)
+  }
+
+  const handleResetProcedureOptions = () => {
+    if (window.confirm('Deseja restaurar a lista padrão de procedimentos realizados?')) {
+      handleSaveProcedureOptions(DEFAULT_PROCEDURE_OPTIONS)
+    }
+  }
 
   useEffect(() => {
     const loadTemplates = async () => {
@@ -588,8 +684,66 @@ export default function PatientForm() {
               </h3>
               
               <div className="form-group">
-                <label className="form-label">Procedimento Realizado</label>
-                <textarea className="form-control" name="procedures_performed" value={form.procedures_performed} onChange={handleFormChange} style={{ minHeight: '100px' }} />
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <label className="form-label" style={{ margin: 0 }}>Procedimento Realizado</label>
+                  <button
+                    type="button"
+                    onClick={() => setShowManageProceduresModal(true)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--accent-color)',
+                      fontSize: '0.78rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.3rem'
+                    }}
+                  >
+                    <Settings size={13} /> Gerenciar Opções
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.6rem', flexWrap: 'wrap' }}>
+                  {procedureOptions.map(proc => {
+                    const selected = isProcSelected(proc)
+                    return (
+                      <button
+                        key={proc}
+                        type="button"
+                        onClick={() => handleToggleProcedure(proc)}
+                        style={{
+                          background: selected ? 'var(--accent-color)' : 'rgba(14, 145, 168, 0.08)',
+                          border: selected ? '1px solid var(--accent-color)' : '1px solid rgba(14, 145, 168, 0.2)',
+                          color: selected ? '#ffffff' : 'var(--accent-color)',
+                          fontSize: '0.78rem',
+                          fontWeight: selected ? 600 : 500,
+                          padding: '0.25rem 0.65rem',
+                          borderRadius: '6px',
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.3rem',
+                          boxShadow: selected ? '0 2px 4px rgba(14, 145, 168, 0.25)' : 'none'
+                        }}
+                        title={selected ? `Remover ${proc}` : `Adicionar ${proc}`}
+                      >
+                        {selected ? <Check size={13} /> : <Plus size={13} />} {proc}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                <textarea
+                  className="form-control"
+                  name="procedures_performed"
+                  value={form.procedures_performed}
+                  onChange={handleFormChange}
+                  placeholder="Selecione os procedimentos acima ou digite observações personalizadas..."
+                  style={{ minHeight: '90px' }}
+                />
               </div>
               <div className="grid-2">
                 <div className="form-group" style={{ marginBottom: 0 }}>
@@ -808,6 +962,114 @@ export default function PatientForm() {
                 style={{ fontSize: '0.85rem' }}
               >
                 Concluir
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Interactive Procedure Options Manager Modal */}
+      {showManageProceduresModal && createPortal(
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10050,
+          backdropFilter: 'blur(5px)'
+        }}>
+          <div className="glass-card" style={{ width: '540px', maxWidth: '92vw', background: 'white', maxHeight: '90vh', overflowY: 'auto', padding: '1.75rem', animation: 'pageFadeInUp 0.25s ease-out' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', borderBottom: '1px solid var(--surface-border)', paddingBottom: '0.75rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                <Settings size={20} color="var(--accent-color)" />
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                  Gerenciar Procedimentos Pré-Digitados
+                </h3>
+              </div>
+              <button className="modal-close-btn" onClick={() => { setShowManageProceduresModal(false); setNewProcedureInput(''); }}>
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Existing Procedures List */}
+            <div style={{ marginBottom: '1.25rem' }}>
+              <h4 style={{ fontSize: '0.88rem', color: 'var(--text-primary)', margin: '0 0 0.75rem 0', fontWeight: 600 }}>
+                Procedimentos na Lista ({procedureOptions.length})
+              </h4>
+
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', maxHeight: '200px', overflowY: 'auto', padding: '0.5rem', background: '#fcfdfe', border: '1px solid var(--surface-border)', borderRadius: '8px' }}>
+                {procedureOptions.map(proc => (
+                  <div
+                    key={proc}
+                    style={{
+                      background: 'rgba(14, 145, 168, 0.08)',
+                      border: '1px solid rgba(14, 145, 168, 0.2)',
+                      color: 'var(--accent-color)',
+                      fontSize: '0.82rem',
+                      fontWeight: 600,
+                      padding: '0.3rem 0.65rem',
+                      borderRadius: '6px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.4rem'
+                    }}
+                  >
+                    <span>{proc}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteProcedureOption(proc)}
+                      style={{ background: 'none', border: 'none', color: 'var(--danger-color)', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 0 }}
+                      title={`Remover ${proc}`}
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Add New Procedure Form */}
+            <div style={{ background: 'rgba(14, 145, 168, 0.04)', padding: '1rem', borderRadius: '10px', border: '1px solid var(--surface-border)', marginBottom: '1.25rem' }}>
+              <h4 style={{ fontSize: '0.86rem', fontWeight: 600, color: 'var(--accent-color)', margin: '0 0 0.75rem 0', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <Plus size={15} /> Adicionar Novo Procedimento
+              </h4>
+
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="Ex: Cauterização, Órtese de Aço..."
+                  value={newProcedureInput}
+                  onChange={(e) => setNewProcedureInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddProcedureOption(); } }}
+                  style={{ fontSize: '0.85rem', flex: 1 }}
+                />
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleAddProcedureOption}
+                  style={{ fontSize: '0.8rem', padding: '0.35rem 0.85rem', display: 'flex', alignItems: 'center', gap: '0.3rem', flexShrink: 0 }}
+                >
+                  <Plus size={14} /> Adicionar
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--surface-border)', paddingTop: '0.85rem' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={handleResetProcedureOptions}
+                style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+              >
+                <RotateCcw size={13} /> Restaurar Padrões
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => setShowManageProceduresModal(false)}
+                style={{ fontSize: '0.82rem', padding: '0.4rem 1.1rem' }}
+              >
+                Concluído
               </button>
             </div>
           </div>
