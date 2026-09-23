@@ -16,8 +16,9 @@ import CalendarScreen from './screens/CalendarScreen'
 import ActivationScreen from './screens/ActivationScreen'
 import FinancialScreen from './screens/FinancialScreen'
 import LockScreen from './screens/LockScreen'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Settings } from 'lucide-react'
 import { getPortugueseCorrection } from './utils/ptBrDictionary'
+import logoImg from './assets/logo.png'
 import './assets/main.css'
 
 function SessionGuard({ children }: { children: React.ReactNode }) {
@@ -63,13 +64,46 @@ function SessionGuard({ children }: { children: React.ReactNode }) {
 }
 
 /**
+ * Safe helper to update a React controlled input or textarea value imperatively
+ * without blocking native typing or dropping React synthetic events.
+ */
+function applySafeValue(
+  target: HTMLInputElement | HTMLTextAreaElement,
+  nextVal: string,
+  caretPos: number
+) {
+  const isTextArea = target.tagName === 'TEXTAREA'
+  const proto = isTextArea ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype
+  const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set
+
+  // Inform React 16+ internal value tracker so synthetic onChange fires
+  const tracker = (target as any)._valueTracker
+  if (tracker) {
+    tracker.setValue('')
+  }
+
+  if (nativeSetter) {
+    nativeSetter.call(target, nextVal)
+  } else {
+    target.value = nextVal
+  }
+
+  if (typeof caretPos === 'number') {
+    target.setSelectionRange(caretPos, caretPos)
+  }
+
+  target.dispatchEvent(new Event('input', { bubbles: true }))
+}
+
+/**
  * Gerenciador global de capitalização automática:
  * Garante que a primeira letra de campos de texto ou após pontuações (., !, ?) seja maiúscula
- * sem que o usuário precise pressionar Caps Lock, respeitando a preferência configurada.
+ * sem bloquear digitação nativa e respeitando componentes controlados do React.
  */
 function AutoCapitalizeManager() {
   React.useEffect(() => {
     let isEnabled = true
+    let isTransforming = false
 
     // Carrega preferência inicial
     window.api.getSetting('auto_capitalize_first_letter').then(val => {
@@ -88,9 +122,8 @@ function AutoCapitalizeManager() {
 
     window.addEventListener('podonly-autocapitalize-changed', handlePrefChange)
 
-    // Intercepta input para capitalizar primeira letra do campo ou após ponto final
-    const handleBeforeInput = (e: InputEvent) => {
-      if (!isEnabled) return
+    const handleInput = (e: Event) => {
+      if (!isEnabled || isTransforming) return
 
       const target = e.target as HTMLElement | null
       if (!target) return
@@ -107,51 +140,40 @@ function AutoCapitalizeManager() {
       const inputElem = target as HTMLInputElement | HTMLTextAreaElement
       if (inputElem.readOnly || inputElem.disabled) return
 
-      // Apenas intercepta inserção de texto único (caractere digitado)
-      if (e.inputType !== 'insertText' || !e.data || e.data.length !== 1) return
-
-      const char = e.data
-      // Se não for letra minúscula, ignora
-      if (char.toLowerCase() === char.toUpperCase()) return
-
-      const start = inputElem.selectionStart ?? 0
       const val = inputElem.value
+      if (!val) return
 
-      // Verifica se estamos no início do campo ou após pontuação (. ! ? ou quebra de linha)
-      const textBefore = val.slice(0, start)
+      const caretPos = inputElem.selectionStart ?? val.length
+      if (caretPos < 1) return
+
+      // Caractere recém-digitado antes do cursor
+      const char = val[caretPos - 1]
+      if (!char || char.toLowerCase() === char.toUpperCase() || char === char.toUpperCase()) return
+
+      const textBefore = val.slice(0, caretPos - 1)
       const shouldCapitalize =
         textBefore.trim().length === 0 || // Início do campo ou só espaços
-        /(?:[.!?]\s*|\n\s*)$/.test(textBefore) // Logo após pontuação final ou quebra de linha
+        /(?:[.!?]\s+|\n\s*)$/.test(textBefore) // Logo após pontuação com espaço ou quebra de linha
 
-      if (shouldCapitalize && char !== char.toUpperCase()) {
-        e.preventDefault()
+      if (shouldCapitalize) {
         const upperChar = char.toUpperCase()
-        const end = inputElem.selectionEnd ?? start
-
-        // Insere caractere maiúsculo respeitando histórico de undo nativo quando possível
-        if (typeof document.execCommand === 'function' && document.execCommand('insertText', false, upperChar)) {
-          // Inserido com sucesso via execCommand
-        } else {
-          // Fallback manual compatível com componentes controlados do React
-          const nextVal = val.slice(0, start) + upperChar + val.slice(end)
-          const proto = target.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype
-          const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set
-          if (nativeSetter) {
-            nativeSetter.call(inputElem, nextVal)
-          } else {
-            inputElem.value = nextVal
-          }
-          inputElem.setSelectionRange(start + 1, start + 1)
-          inputElem.dispatchEvent(new Event('input', { bubbles: true }))
+        const nextVal = val.slice(0, caretPos - 1) + upperChar + val.slice(caretPos)
+        isTransforming = true
+        try {
+          applySafeValue(inputElem, nextVal, caretPos)
+        } catch (err) {
+          console.error('AutoCapitalize error:', err)
+        } finally {
+          isTransforming = false
         }
       }
     }
 
-    document.addEventListener('beforeinput', handleBeforeInput as EventListener, true)
+    document.addEventListener('input', handleInput, true)
 
     return () => {
       window.removeEventListener('podonly-autocapitalize-changed', handlePrefChange)
-      document.removeEventListener('beforeinput', handleBeforeInput as EventListener, true)
+      document.removeEventListener('input', handleInput, true)
     }
   }, [])
 
@@ -161,11 +183,12 @@ function AutoCapitalizeManager() {
 /**
  * Gerenciador de auto-correção em Português do Brasil:
  * Corrige automaticamente acentuações e erros comuns ao pressionar espaço ou pontuação
- * utilizando o dicionário de regras gramaticais de sufixos em Português.
+ * utilizando o dicionário de regras gramaticais de sufixos em Português sem cancelar digitação.
  */
 function AutoCorrectManager() {
   React.useEffect(() => {
     let isEnabled = true
+    let isTransforming = false
 
     window.api.getSetting('auto_correct_portuguese').then(val => {
       if (val !== null && val !== undefined && val !== '') {
@@ -182,8 +205,8 @@ function AutoCorrectManager() {
 
     window.addEventListener('podonly-autocorrect-changed', handlePrefChange)
 
-    const handleBeforeInput = (e: InputEvent) => {
-      if (!isEnabled) return
+    const handleInput = (e: Event) => {
+      if (!isEnabled || isTransforming) return
 
       const target = e.target as HTMLElement | null
       if (!target) return
@@ -200,14 +223,17 @@ function AutoCorrectManager() {
       const inputElem = target as HTMLInputElement | HTMLTextAreaElement
       if (inputElem.readOnly || inputElem.disabled) return
 
-      const triggerChar = e.data
-      const isSpaceOrPunctuation = triggerChar && /^[\s.,!?;:]$/.test(triggerChar)
-      if (!isSpaceOrPunctuation && e.inputType !== 'insertLineBreak') return
-
-      const start = inputElem.selectionStart ?? 0
       const val = inputElem.value
+      if (!val) return
 
-      const textBefore = val.slice(0, start)
+      const caretPos = inputElem.selectionStart ?? val.length
+      if (caretPos < 2) return
+
+      const triggerChar = val[caretPos - 1]
+      const isSpaceOrPunctuation = /^[\s.,!?;:]$/.test(triggerChar)
+      if (!isSpaceOrPunctuation) return
+
+      const textBefore = val.slice(0, caretPos - 1)
       const match = textBefore.match(/([a-zA-ZáàâãéèêíïóôõöúçÑñÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇ]+)$/)
       if (!match) return
 
@@ -215,38 +241,25 @@ function AutoCorrectManager() {
       const correctedWord = getPortugueseCorrection(rawWord)
 
       if (correctedWord && correctedWord !== rawWord) {
-        const wordStart = start - rawWord.length
-        const end = inputElem.selectionEnd ?? start
-        const textToInsert = correctedWord + (triggerChar ?? '\n')
-
-        e.preventDefault()
-
-        // Seleciona a palavra anterior a ser substituída + insere palavra corrigida com o caractere acionador
-        inputElem.setSelectionRange(wordStart, end)
-
-        if (typeof document.execCommand === 'function' && document.execCommand('insertText', false, textToInsert)) {
-          // Inserido com sucesso via execCommand
-        } else {
-          const nextVal = val.slice(0, wordStart) + textToInsert + val.slice(end)
-          const proto = target.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype
-          const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set
-          if (nativeSetter) {
-            nativeSetter.call(inputElem, nextVal)
-          } else {
-            inputElem.value = nextVal
-          }
-          const newCaretPos = wordStart + textToInsert.length
-          inputElem.setSelectionRange(newCaretPos, newCaretPos)
-          inputElem.dispatchEvent(new Event('input', { bubbles: true }))
+        const wordStart = (caretPos - 1) - rawWord.length
+        const nextVal = val.slice(0, wordStart) + correctedWord + val.slice(caretPos - 1)
+        const newCaretPos = wordStart + correctedWord.length + 1
+        isTransforming = true
+        try {
+          applySafeValue(inputElem, nextVal, newCaretPos)
+        } catch (err) {
+          console.error('AutoCorrect error:', err)
+        } finally {
+          isTransforming = false
         }
       }
     }
 
-    document.addEventListener('beforeinput', handleBeforeInput as EventListener, true)
+    document.addEventListener('input', handleInput, true)
 
     return () => {
       window.removeEventListener('podonly-autocorrect-changed', handlePrefChange)
-      document.removeEventListener('beforeinput', handleBeforeInput as EventListener, true)
+      document.removeEventListener('input', handleInput, true)
     }
   }, [])
 
@@ -339,12 +352,46 @@ function AppGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+import AppSidebar from './components/AppSidebar'
+import GeneralSettingsModal from './components/GeneralSettingsModal'
+
 function AppContent(): React.JSX.Element {
   const location = useLocation()
   const isActivation = location.pathname === '/activation'
   const match = location.pathname.match(/\/patient\/(\d+)/)
   const backLink = location.pathname.includes('/form/') && match ? `/patient/${match[1]}` : '/patients'
   const showBackButton = location.pathname.startsWith('/patient/') || location.pathname === '/patient/new'
+
+  const [layoutMode, setLayoutMode] = useState<'topbar' | 'sidebar'>('topbar')
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+
+  React.useEffect(() => {
+    window.api.getSetting('layout_mode').then((val) => {
+      if (val === 'sidebar' || val === 'topbar') {
+        setLayoutMode(val)
+      }
+    }).catch(console.error)
+
+    const handleLayoutChange = (e: Event) => {
+      const customEvent = e as CustomEvent<{ mode: 'topbar' | 'sidebar' }>
+      if (customEvent.detail && (customEvent.detail.mode === 'topbar' || customEvent.detail.mode === 'sidebar')) {
+        setLayoutMode(customEvent.detail.mode)
+      }
+    }
+
+    const handleOpenSettings = () => {
+      setIsSettingsOpen(true)
+    }
+
+    window.addEventListener('podonly-layout-changed', handleLayoutChange)
+    window.addEventListener('podonly-open-settings', handleOpenSettings)
+    return () => {
+      window.removeEventListener('podonly-layout-changed', handleLayoutChange)
+      window.removeEventListener('podonly-open-settings', handleOpenSettings)
+    }
+  }, [])
+
+  const isSidebarMode = layoutMode === 'sidebar' && !isActivation
 
   return (
     <>
@@ -355,17 +402,62 @@ function AppContent(): React.JSX.Element {
         <div className="blob blob-2"></div>
         <div className="blob blob-3"></div>
       </div>
-      <div className="app-container">
-        {!isActivation && (
-          <header className="app-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={{ width: '180px', display: 'flex', alignItems: 'center' }}>
-              {showBackButton ? (
-                <Link 
-                  to={backLink}
+      <div className={`app-container ${isSidebarMode ? 'layout-sidebar' : ''}`}>
+        {isSidebarMode && <AppSidebar />}
+
+        <div className={isSidebarMode ? 'app-main-layout' : 'app-content-wrapper'} style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, height: '100vh', overflow: 'hidden' }}>
+          {/* Topbar Layout Header */}
+          {!isActivation && !isSidebarMode && (
+            <header className="app-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ width: '220px', display: 'flex', alignItems: 'center' }}>
+                {showBackButton ? (
+                  <Link 
+                    to={backLink}
+                    style={{
+                      background: 'rgba(5, 129, 157, 0.08)',
+                      border: '1px solid rgba(5, 129, 157, 0.18)',
+                      color: 'var(--brand-dark)',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '8px',
+                      borderRadius: '50%',
+                      transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                      marginLeft: '4px',
+                      textDecoration: 'none',
+                      boxShadow: '0 2px 8px rgba(5, 129, 157, 0.06)'
+                    }}
+                    className="browser-back-btn"
+                    title="Voltar"
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'rgba(5, 129, 157, 0.16)'
+                      e.currentTarget.style.borderColor = 'rgba(5, 129, 157, 0.35)'
+                      e.currentTarget.style.transform = 'scale(1.05)'
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'rgba(5, 129, 157, 0.08)'
+                      e.currentTarget.style.borderColor = 'rgba(5, 129, 157, 0.18)'
+                      e.currentTarget.style.transform = 'scale(1)'
+                    }}
+                  >
+                    <ArrowLeft size={20} />
+                  </Link>
+                ) : (
+                  <div style={{ width: '38px', height: '38px' }} />
+                )}
+              </div>
+              <NavigationSwitch />
+              <div style={{ width: '220px', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '0.65rem' }}>
+                <button
+                  type="button"
+                  onClick={() => setIsSettingsOpen(true)}
+                  title="Configurações do Sistema"
+                  className="topbar-settings-btn"
                   style={{
-                    background: 'rgba(14, 145, 168, 0.12)',
-                    border: '1px solid rgba(14, 145, 168, 0.25)',
-                    color: 'var(--accent-color)',
+                    background: 'rgba(5, 129, 157, 0.08)',
+                    border: '1px solid rgba(5, 129, 157, 0.18)',
+                    color: 'var(--brand-dark)',
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
@@ -373,51 +465,103 @@ function AppContent(): React.JSX.Element {
                     padding: '8px',
                     borderRadius: '50%',
                     transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                    marginLeft: '4px',
-                    textDecoration: 'none',
-                    boxShadow: '0 2px 8px rgba(14, 145, 168, 0.12)'
+                    boxShadow: '0 2px 8px rgba(5, 129, 157, 0.06)',
+                    marginRight: '4px'
                   }}
-                  className="browser-back-btn"
-                  title="Voltar"
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background = 'rgba(14, 145, 168, 0.22)'
-                    e.currentTarget.style.borderColor = 'rgba(14, 145, 168, 0.4)'
+                    e.currentTarget.style.background = 'rgba(5, 129, 157, 0.16)'
+                    e.currentTarget.style.borderColor = 'rgba(5, 129, 157, 0.35)'
                     e.currentTarget.style.transform = 'scale(1.05)'
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.background = 'rgba(14, 145, 168, 0.12)'
-                    e.currentTarget.style.borderColor = 'rgba(14, 145, 168, 0.25)'
+                    e.currentTarget.style.background = 'rgba(5, 129, 157, 0.08)'
+                    e.currentTarget.style.borderColor = 'rgba(5, 129, 157, 0.18)'
                     e.currentTarget.style.transform = 'scale(1)'
                   }}
                 >
-                  <ArrowLeft size={20} />
-                </Link>
-              ) : (
-                <div style={{ width: '38px', height: '38px' }} />
-              )}
+                  <Settings size={18} />
+                </button>
+                <img 
+                  src={logoImg} 
+                  alt="PodOnly" 
+                  style={{ 
+                    width: '38px', 
+                    height: '38px', 
+                    objectFit: 'contain',
+                    filter: 'drop-shadow(0 2px 8px rgba(55, 214, 154, 0.35))' 
+                  }} 
+                />
+                <h1 style={{ 
+                  margin: 0, 
+                  fontSize: '1.45rem', 
+                  fontWeight: 800, 
+                  letterSpacing: '-0.02em', 
+                  display: 'flex', 
+                  alignItems: 'center',
+                  gap: '1px' 
+                }}>
+                  <span style={{ color: 'var(--brand-dark)' }}>Pod</span>
+                  <span style={{ 
+                    background: 'var(--brand-gradient)', 
+                    WebkitBackgroundClip: 'text', 
+                    WebkitTextFillColor: 'transparent' 
+                  }}>Only</span>
+                </h1>
+              </div>
+            </header>
+          )}
+
+          {/* Sidebar Mode Minimal Back-Bar (only when inside nested patient/form routes) */}
+          {isSidebarMode && showBackButton && (
+            <div className="sidebar-sub-header">
+              <Link 
+                to={backLink}
+                style={{
+                  background: 'rgba(5, 129, 157, 0.08)',
+                  border: '1px solid rgba(5, 129, 157, 0.18)',
+                  color: 'var(--brand-dark)',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '6px 12px',
+                  borderRadius: '10px',
+                  gap: '0.4rem',
+                  textDecoration: 'none',
+                  fontSize: '0.85rem',
+                  fontWeight: 600,
+                  boxShadow: '0 2px 6px rgba(5, 129, 157, 0.06)'
+                }}
+                title="Voltar"
+              >
+                <ArrowLeft size={16} />
+                <span>Voltar</span>
+              </Link>
             </div>
-            <NavigationSwitch />
-            <div style={{ width: '180px', display: 'flex', justifyContent: 'flex-end' }}>
-              <h1 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 700, background: 'linear-gradient(135deg, #0E91A8, #086173)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', letterSpacing: '-0.02em' }}>
-                Podonly
-              </h1>
-            </div>
-          </header>
-        )}
-        <main className={`app-content ${isActivation ? 'activation-mode' : ''}`}>
-          <Routes>
-            <Route path="/" element={<DashboardScreen />} />
-            <Route path="/activation" element={<ActivationScreen />} />
-            <Route path="/patients" element={<PatientList />} />
-            <Route path="/calendar" element={<CalendarScreen />} />
-            <Route path="/financial" element={<FinancialScreen />} />
-            <Route path="/patient/new" element={<PatientDetails />} />
-            <Route path="/patient/:id" element={<PatientDetails />} />
-            <Route path="/patient/:id/form/new" element={<PatientForm />} />
-            <Route path="/patient/:id/form/:formId" element={<PatientForm />} />
-          </Routes>
-        </main>
+          )}
+
+          <main className={`app-content ${isActivation ? 'activation-mode' : ''}`} style={{ flex: 1, overflowY: 'auto' }}>
+            <Routes>
+              <Route path="/" element={<DashboardScreen />} />
+              <Route path="/activation" element={<ActivationScreen />} />
+              <Route path="/patients" element={<PatientList />} />
+              <Route path="/calendar" element={<CalendarScreen />} />
+              <Route path="/financial" element={<FinancialScreen />} />
+              <Route path="/patient/new" element={<PatientDetails />} />
+              <Route path="/patient/:id" element={<PatientDetails />} />
+              <Route path="/patient/:id/form/new" element={<PatientForm />} />
+              <Route path="/patient/:id/form/:formId" element={<PatientForm />} />
+            </Routes>
+          </main>
+        </div>
       </div>
+
+      {isSettingsOpen && (
+        <GeneralSettingsModal
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+        />
+      )}
     </>
   )
 }

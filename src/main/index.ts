@@ -130,7 +130,7 @@ function createWindow(): void {
 
 // Inicialização e configuração do ciclo de vida da aplicação
 app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.electron')
+  electronApp.setAppUserModelId('com.electron.app')
 
   initDatabase()
   registerIpcHandlers()

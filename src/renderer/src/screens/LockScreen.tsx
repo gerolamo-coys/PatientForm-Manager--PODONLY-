@@ -77,8 +77,22 @@ export default function LockScreen({ onUnlocked }: { onUnlocked: () => void }) {
           {error && <div style={{ color: 'var(--danger-color)', fontSize: '0.9rem' }}>{error}</div>}
 
           <button type="submit" className="btn btn-primary" style={{ marginTop: '0.5rem' }}>
-            {needsSetup ? 'Salvar Senha' : 'Desbloquear'}
+            {needsSetup ? 'Salvar Senha e Proteger' : 'Desbloquear'}
           </button>
+
+          {needsSetup && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={async () => {
+                await window.api.removeSessionLock()
+                onUnlocked()
+              }}
+              style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', border: 'none', background: 'transparent' }}
+            >
+              Continuar sem Senha (Desativar Bloqueio)
+            </button>
+          )}
         </form>
       </div>
     </div>

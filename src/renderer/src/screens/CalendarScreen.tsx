@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { Calendar, dateFnsLocalizer, Views, View } from 'react-big-calendar'
 import withDragAndDrop from 'react-big-calendar/lib/addons/dragAndDrop'
-import { format, parse, startOfWeek, getDay, addMinutes, differenceInMinutes, formatDistanceToNow } from 'date-fns'
+import { format, parse, startOfWeek, getDay, addMinutes, differenceInMinutes, formatDistanceToNow, isBefore } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { Link } from 'react-router-dom'
 import 'react-big-calendar/lib/css/react-big-calendar.css'
@@ -18,7 +18,6 @@ import {
   Search,
   CheckCircle2,
   Clock,
-  Send,
   User,
   Trash2,
   Edit3,
@@ -31,8 +30,13 @@ import {
   DollarSign,
   Phone,
   FileText,
-  ExternalLink
+  ExternalLink,
+  MessageCircle
 } from 'lucide-react'
+import WhatsAppMessageModal, { WhatsAppMessageContext } from '../components/WhatsAppMessageModal'
+import { loadFormsConfig, DEFAULT_FORMS_CONFIG, parseCustomData } from '../utils/formSchemaHelper'
+import { FormsCustomizationConfig } from '../../../shared/types'
+import DynamicCustomFieldsRenderer from '../components/DynamicCustomFieldsRenderer'
 
 const locales = {
   'pt-BR': ptBR,
@@ -59,6 +63,9 @@ interface CalendarEvent {
   status: AppointmentStatus
   service_type?: string | null
   price?: number | null
+  patient_phone?: string | null
+  whatsapp_reminder_sent_at?: string | null
+  custom_data?: string | null
 }
 
 const DnDCalendar = withDragAndDrop<CalendarEvent>(Calendar)
@@ -86,6 +93,12 @@ export const STATUS_CONFIG: Record<AppointmentStatus, { label: string; color: st
     color: '#16a34a',
     bg: 'rgba(22, 163, 74, 0.9)',
     border: '#16a34a'
+  },
+  IN_PROGRESS: {
+    label: 'Em andamento',
+    color: '#0284c7',
+    bg: 'rgba(2, 132, 199, 0.95)',
+    border: '#0284c7'
   },
   COMPLETED: {
     label: 'Concluído',
@@ -136,7 +149,9 @@ export default function CalendarScreen(): React.JSX.Element {
   const [defaultDuration, setDefaultDuration] = useState(60)
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null)
   const [syncWarning, setSyncWarning] = useState<string | null>(null)
-  const [sendingWhatsappId, setSendingWhatsappId] = useState<number | null>(null)
+  const [isMarkingPassed, setIsMarkingPassed] = useState(false)
+  const [whatsappModalContext, setWhatsappModalContext] = useState<WhatsAppMessageContext | null>(null)
+  const [isWhatsappModalOpen, setIsWhatsappModalOpen] = useState(false)
 
   // Form State
   const [editingId, setEditingId] = useState<number | null>(null)
@@ -152,6 +167,29 @@ export default function CalendarScreen(): React.JSX.Element {
   const [endDate, setEndDate] = useState('')
   const [endTime, setEndTime] = useState('')
   const [notes, setNotes] = useState('')
+  const [appointmentCustomData, setAppointmentCustomData] = useState<string>('{}')
+  const [formsConfig, setFormsConfig] = useState<FormsCustomizationConfig>(DEFAULT_FORMS_CONFIG)
+
+  const availableProcedures = useMemo(() => {
+    const fromConfig = formsConfig.appointment.serviceOptions.map(opt => {
+      const existing = PROCEDURES_LIST.find(p => p.label === opt.name)
+      return {
+        label: opt.name,
+        duration: existing ? existing.duration : defaultDuration,
+        price: opt.defaultPrice ?? (existing ? existing.price : 0)
+      }
+    })
+    if (serviceType && !fromConfig.some(p => p.label === serviceType)) {
+      const existing = PROCEDURES_LIST.find(p => p.label === serviceType)
+      fromConfig.push({
+        label: serviceType,
+        duration: existing ? existing.duration : defaultDuration,
+        price: existing ? existing.price : 0
+      })
+    }
+    return fromConfig.length > 0 ? fromConfig : PROCEDURES_LIST
+  }, [formsConfig.appointment.serviceOptions, defaultDuration, serviceType])
+
   const patientDropdownRef = useRef<HTMLDivElement>(null)
   const isSyncingRef = useRef(false)
   isSyncingRef.current = isSyncing
@@ -161,6 +199,13 @@ export default function CalendarScreen(): React.JSX.Element {
   useEffect(() => {
     loadAppointments()
     loadPatients()
+    loadFormsConfig().then(setFormsConfig).catch(console.error)
+    const handleFormsConfigUpdated = (e: Event) => {
+      const customEvent = e as CustomEvent<FormsCustomizationConfig>
+      if (customEvent.detail) setFormsConfig(customEvent.detail)
+      else loadFormsConfig().then(setFormsConfig).catch(console.error)
+    }
+    window.addEventListener('podonly-forms-config-updated', handleFormsConfigUpdated)
     checkAuthStatus().then((isAuth) => {
       if (isAuth) {
         handleSync(false)
@@ -201,10 +246,17 @@ export default function CalendarScreen(): React.JSX.Element {
       }
     }, 60000)
 
+    // Atualização periódica a cada 30 segundos para manter status dinâmicos (Em andamento / Concluído)
+    const apptRefreshInterval = setInterval(() => {
+      loadAppointments()
+    }, 30000)
+
     return () => {
+      window.removeEventListener('podonly-forms-config-updated', handleFormsConfigUpdated)
       window.removeEventListener('trigger-calendar-sync', handleGlobalSync)
       window.removeEventListener('focus', handleWindowFocus)
       clearInterval(syncInterval)
+      clearInterval(apptRefreshInterval)
     }
   }, [])
 
@@ -247,16 +299,48 @@ export default function CalendarScreen(): React.JSX.Element {
   }
 
   const loadAppointments = async () => {
+    try {
+      const autoComp = await window.api.getSetting('auto_complete_past_appointments')
+      if (autoComp === 'true') {
+        try {
+          await window.api.markPassedAppointmentsAsCompleted()
+        } catch (autoErr) {
+          console.error('Falha na auto-conclusão de consultas passadas:', autoErr)
+        }
+      }
+    } catch (e) {
+      console.error(e)
+    }
+
     const appointments = await window.api.getAllAppointments()
-    const apptMap = appointments.map(a => ({
-      ...a,
-      start: new Date(a.start_time),
-      end: new Date(a.end_time),
-      title: a.title,
-      status: a.status || 'SCHEDULED',
-      service_type: a.service_type || null,
-      price: a.price ?? null
-    }))
+    const nowMs = Date.now()
+    const apptMap = appointments.map(a => {
+      const startDateObj = new Date(a.start_time)
+      const endDateObj = new Date(a.end_time)
+      let resolvedStatus = a.status || 'SCHEDULED'
+
+      // Status "Em andamento" ativo exclusivamente durante o appointment
+      if (
+        resolvedStatus !== 'CANCELLED' && 
+        resolvedStatus !== 'NO_SHOW'
+      ) {
+        const sTime = startDateObj.getTime()
+        const eTime = endDateObj.getTime()
+        if (sTime <= nowMs && nowMs < eTime) {
+          resolvedStatus = 'IN_PROGRESS'
+        }
+      }
+
+      return {
+        ...a,
+        start: startDateObj,
+        end: endDateObj,
+        title: a.title,
+        status: resolvedStatus,
+        service_type: a.service_type || null,
+        price: a.price ?? null
+      }
+    })
     setEvents(apptMap)
 
     setSelectedEvent(prev => {
@@ -267,6 +351,25 @@ export default function CalendarScreen(): React.JSX.Element {
       }
       return prev
     })
+  }
+
+  const handleMarkPassedAsCompleted = async () => {
+    if (isMarkingPassed) return
+    setIsMarkingPassed(true)
+    try {
+      const count = await window.api.markPassedAppointmentsAsCompleted()
+      if (count > 0) {
+        showToast(`${count} consulta(s) passada(s) marcada(s) como concluída(s)!`, 'success')
+        await loadAppointments()
+      } else {
+        showToast('Nenhuma consulta pendente anterior ao horário atual.', 'success')
+      }
+    } catch (e: any) {
+      console.error('Erro ao marcar consultas passadas como concluídas:', e)
+      showToast(e?.message || 'Erro ao concluir consultas passadas.', 'error')
+    } finally {
+      setIsMarkingPassed(false)
+    }
   }
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -400,21 +503,22 @@ export default function CalendarScreen(): React.JSX.Element {
     }
   }
 
-  // Quick Action: Send WhatsApp Reminder
-  const handleSendWhatsappReminder = async (appointmentId: number) => {
-    setSendingWhatsappId(appointmentId)
-    try {
-      const res = await window.api.sendSingleAppointmentReminder(appointmentId)
-      if (res && res.success) {
-        showToast('✓ Lembrete de consulta enviado via WhatsApp!')
-      } else {
-        showToast(res?.error || 'Falha ao enviar lembrete via WhatsApp.', 'error')
-      }
-    } catch (e: any) {
-      showToast(e.message || 'Erro ao comunicar com WhatsApp.', 'error')
-    } finally {
-      setSendingWhatsappId(null)
-    }
+  // Quick Action: Send WhatsApp Reminder / Open WhatsApp Modal
+  const handleOpenWhatsappFromEvent = (event: CalendarEvent) => {
+    const matchedPatient = patients.find(p => p.id === event.patient_id)
+    const phone = event.patient_phone || matchedPatient?.phone || ''
+
+    setWhatsappModalContext({
+      appointmentId: event.id,
+      patientId: event.patient_id,
+      patientName: event.title,
+      phone,
+      appointmentDate: format(event.start, 'dd/MM/yyyy'),
+      appointmentTime: format(event.start, 'HH:mm'),
+      serviceType: event.service_type || 'Consulta Podológica',
+      reason: 'reminder'
+    })
+    setIsWhatsappModalOpen(true)
   }
 
   // Quick Action: Quick Status Update
@@ -441,19 +545,21 @@ export default function CalendarScreen(): React.JSX.Element {
   const openModalForNew = (start?: Date) => {
     const baseStart = start || new Date()
     const calculatedEnd = addMinutes(baseStart, defaultDuration)
+    const defaultProc = availableProcedures[0] || PROCEDURES_LIST[0]
     
     setEditingId(null)
     setPatientId('')
     setPatientSearch('')
     setCustomTitle('')
-    setServiceType(PROCEDURES_LIST[0].label)
+    setServiceType(defaultProc.label)
     setAppointmentStatus('SCHEDULED')
-    setPrice(String(PROCEDURES_LIST[0].price))
+    setPrice(String(defaultProc.price))
     setStartDate(format(baseStart, 'yyyy-MM-dd'))
     setStartTime(format(baseStart, 'HH:mm'))
     setEndDate(format(calculatedEnd, 'yyyy-MM-dd'))
     setEndTime(format(calculatedEnd, 'HH:mm'))
     setNotes('')
+    setAppointmentCustomData('{}')
     setIsQuickViewOpen(false)
     setIsModalOpen(true)
   }
@@ -465,7 +571,7 @@ export default function CalendarScreen(): React.JSX.Element {
     const matchedPatient = patients.find(p => p.id === event.patient_id)
     setPatientSearch(matchedPatient ? `${matchedPatient.first_name} ${matchedPatient.last_name}` : '')
     setCustomTitle(event.title)
-    setServiceType(event.service_type || PROCEDURES_LIST[0].label)
+    setServiceType(event.service_type || (availableProcedures[0]?.label || PROCEDURES_LIST[0].label))
     setAppointmentStatus(event.status || 'SCHEDULED')
     setPrice(event.price !== null && event.price !== undefined ? String(event.price) : '')
     
@@ -476,6 +582,7 @@ export default function CalendarScreen(): React.JSX.Element {
     setEndDate(format(endD, 'yyyy-MM-dd'))
     setEndTime(format(endD, 'HH:mm'))
     setNotes(event.notes || '')
+    setAppointmentCustomData(event.custom_data || '{}')
     
     setIsQuickViewOpen(false)
     setIsModalOpen(true)
@@ -483,7 +590,7 @@ export default function CalendarScreen(): React.JSX.Element {
 
   const handleProcedureChange = (selectedLabel: string) => {
     setServiceType(selectedLabel)
-    const proc = PROCEDURES_LIST.find(p => p.label === selectedLabel)
+    const proc = availableProcedures.find(p => p.label === selectedLabel) || PROCEDURES_LIST.find(p => p.label === selectedLabel)
     if (proc) {
       if (proc.price > 0) setPrice(String(proc.price))
       if (startDate && startTime) {
@@ -546,7 +653,8 @@ export default function CalendarScreen(): React.JSX.Element {
       google_event_id: null,
       status: appointmentStatus,
       service_type: serviceType,
-      price: price ? parseFloat(price.replace(',', '.')) : null
+      price: price ? parseFloat(price.replace(',', '.')) : null,
+      custom_data: appointmentCustomData || '{}'
     }
 
     if (editingId) {
@@ -607,6 +715,16 @@ export default function CalendarScreen(): React.JSX.Element {
       return null
     }
   }, [lastSyncTime, isSyncing])
+
+  // Count of past pending appointments
+  const passedPendingCount = useMemo(() => {
+    const now = new Date()
+    return events.filter(e => 
+      e.status !== 'COMPLETED' && 
+      e.status !== 'CANCELLED' && 
+      isBefore(e.end, now)
+    ).length
+  }, [events])
 
   return (
     <>
@@ -688,6 +806,41 @@ export default function CalendarScreen(): React.JSX.Element {
 
           {/* Action Buttons */}
           <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+            {passedPendingCount > 0 && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={isMarkingPassed}
+                onClick={handleMarkPassedAsCompleted}
+                style={{
+                  fontSize: '0.82rem',
+                  padding: '0.4rem 0.75rem',
+                  color: '#16a34a',
+                  borderColor: 'rgba(22, 163, 74, 0.3)',
+                  background: 'rgba(22, 163, 74, 0.08)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
+                  fontWeight: 600,
+                  opacity: isMarkingPassed ? 0.7 : 1,
+                  cursor: isMarkingPassed ? 'not-allowed' : 'pointer'
+                }}
+                title="Marcar consultas com horário já encerrado como Concluído"
+              >
+                {isMarkingPassed ? (
+                  <>
+                    <RefreshCw size={14} className="spin" color="#16a34a" />
+                    <span>Concluindo...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 size={15} color="#16a34a" />
+                    <span>Concluir Passadas ({passedPendingCount})</span>
+                  </>
+                )}
+              </button>
+            )}
+
             {!isAuthenticated ? (
               <button className="btn btn-secondary" onClick={() => setShowConfig(true)} style={{ fontSize: '0.85rem' }}>
                 <LogIn size={16} /> Conectar Google
@@ -856,7 +1009,7 @@ export default function CalendarScreen(): React.JSX.Element {
             >
               Todos ({events.length})
             </button>
-            {(['CONFIRMED', 'SCHEDULED', 'COMPLETED'] as AppointmentStatus[]).map(st => (
+            {(['CONFIRMED', 'IN_PROGRESS', 'SCHEDULED', 'COMPLETED'] as AppointmentStatus[]).map(st => (
               <button
                 key={st}
                 onClick={() => setStatusFilter(statusFilter === st ? 'ALL' : st)}
@@ -948,7 +1101,7 @@ export default function CalendarScreen(): React.JSX.Element {
       </div>
 
       {/* Quick Event Summary Popover Modal */}
-      {isQuickViewOpen && selectedEvent && (
+      {isQuickViewOpen && selectedEvent && createPortal(
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
@@ -1028,11 +1181,35 @@ export default function CalendarScreen(): React.JSX.Element {
               <button
                 type="button"
                 className="btn btn-secondary"
-                disabled={sendingWhatsappId === selectedEvent.id}
-                onClick={() => handleSendWhatsappReminder(selectedEvent.id)}
+                onClick={() => handleOpenWhatsappFromEvent(selectedEvent)}
                 style={{ flex: 1, fontSize: '0.8rem', padding: '0.4rem 0.6rem', color: '#16a34a', borderColor: 'rgba(22, 163, 74, 0.3)', background: 'rgba(22, 163, 74, 0.05)' }}
+                title="Abrir Central WhatsApp com prévia da mensagem"
               >
-                <Send size={14} /> {sendingWhatsappId === selectedEvent.id ? 'Enviando...' : 'Lembrete WhatsApp'}
+                <MessageCircle size={14} /> WhatsApp
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => handleQuickStatusChange(
+                  selectedEvent,
+                  selectedEvent.status === 'COMPLETED' ? 'SCHEDULED' : 'COMPLETED'
+                )}
+                style={{
+                  flex: 1,
+                  fontSize: '0.8rem',
+                  padding: '0.4rem 0.6rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '0.35rem',
+                  color: selectedEvent.status === 'COMPLETED' ? '#16a34a' : 'var(--text-secondary)',
+                  borderColor: selectedEvent.status === 'COMPLETED' ? 'rgba(22, 163, 74, 0.3)' : 'var(--surface-border)',
+                  background: selectedEvent.status === 'COMPLETED' ? 'rgba(22, 163, 74, 0.08)' : 'white'
+                }}
+              >
+                <CheckCircle2 size={14} color={selectedEvent.status === 'COMPLETED' ? '#16a34a' : 'currentColor'} />
+                <span>{selectedEvent.status === 'COMPLETED' ? 'Concluído' : 'Concluir'}</span>
               </button>
             </div>
 
@@ -1084,11 +1261,12 @@ export default function CalendarScreen(): React.JSX.Element {
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Appointment Create / Edit Modal */}
-      {isModalOpen && (
+      {isModalOpen && createPortal(
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
@@ -1195,7 +1373,7 @@ export default function CalendarScreen(): React.JSX.Element {
                     value={serviceType}
                     onChange={e => handleProcedureChange(e.target.value)}
                   >
-                    {PROCEDURES_LIST.map(p => (
+                    {availableProcedures.map(p => (
                       <option key={p.label} value={p.label}>{p.label} ({p.duration} min)</option>
                     ))}
                   </select>
@@ -1259,7 +1437,7 @@ export default function CalendarScreen(): React.JSX.Element {
                       setStartTime(e.target.value)
                       if (startDate && e.target.value) {
                         const startDt = new Date(`${startDate}T${e.target.value}`)
-                        const proc = PROCEDURES_LIST.find(p => p.label === serviceType)
+                        const proc = availableProcedures.find(p => p.label === serviceType) || PROCEDURES_LIST.find(p => p.label === serviceType)
                         const endDt = addMinutes(startDt, proc?.duration || defaultDuration)
                         setEndTime(format(endDt, 'HH:mm'))
                       }
@@ -1280,28 +1458,71 @@ export default function CalendarScreen(): React.JSX.Element {
                 </div>
               </div>
 
+              {/* Dynamic Custom Appointment Fields */}
+              {formsConfig.appointment.customFields.length > 0 && (
+                <div style={{ padding: '0.75rem', borderRadius: '10px', background: 'rgba(14, 165, 233, 0.04)', border: '1px solid rgba(14, 165, 233, 0.14)', marginBottom: '0.75rem' }}>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--primary-color)', marginBottom: '0.5rem' }}>
+                    Campos Personalizados
+                  </div>
+                  <DynamicCustomFieldsRenderer
+                    fields={formsConfig.appointment.customFields}
+                    customDataObj={parseCustomData(appointmentCustomData)}
+                    onChange={(updatedObj) => setAppointmentCustomData(JSON.stringify(updatedObj))}
+                  />
+                </div>
+              )}
+
               {/* Notes */}
               <div className="form-group">
                 <label className="form-label">Notas e Queixas Iniciais</label>
                 <textarea className="form-control" value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="Ex: Paciente com dor na lateral do hálux direito..." />
               </div>
 
-              <div className="form-actions">
-                {editingId && (
-                  <button type="button" className="btn btn-secondary" style={{ borderColor: 'var(--danger-color)', color: 'var(--danger-color)' }} onClick={() => deleteAppt()}>
-                    Excluir
-                  </button>
-                )}
-                <button type="button" className="btn btn-secondary" onClick={() => setIsModalOpen(false)}>Cancelar</button>
-                <button type="submit" className="btn btn-primary">Salvar Agendamento</button>
+              <div className="form-actions" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  {editingId && (
+                    <button type="button" className="btn btn-secondary" style={{ borderColor: 'var(--danger-color)', color: 'var(--danger-color)' }} onClick={() => deleteAppt()}>
+                      Excluir
+                    </button>
+                  )}
+                  {editingId && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => {
+                        const matchedPatient = patients.find(p => String(p.id) === patientId)
+                        setWhatsappModalContext({
+                          appointmentId: editingId,
+                          patientId: patientId ? Number(patientId) : undefined,
+                          patientName: customTitle || (matchedPatient ? `${matchedPatient.first_name} ${matchedPatient.last_name}` : 'Paciente'),
+                          phone: matchedPatient?.phone || '',
+                          appointmentDate: startDate ? format(parse(startDate, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : '',
+                          appointmentTime: startTime,
+                          serviceType,
+                          reason: 'reminder'
+                        })
+                        setIsWhatsappModalOpen(true)
+                      }}
+                      style={{ color: '#16a34a', borderColor: 'rgba(22, 163, 74, 0.4)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                      title="Enviar mensagem ou lembrete via WhatsApp"
+                    >
+                      <MessageCircle size={15} /> WhatsApp
+                    </button>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button type="button" className="btn btn-secondary" onClick={() => setIsModalOpen(false)}>Cancelar</button>
+                  <button type="submit" className="btn btn-primary">Salvar Agendamento</button>
+                </div>
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Google Calendar Connection Modal */}
-      {showConfig && (
+      {showConfig && createPortal(
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
@@ -1583,7 +1804,24 @@ export default function CalendarScreen(): React.JSX.Element {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
+      )}
+
+      {/* WhatsApp Message Modal */}
+      {isWhatsappModalOpen && whatsappModalContext && (
+        <WhatsAppMessageModal
+          isOpen={isWhatsappModalOpen}
+          onClose={() => {
+            setIsWhatsappModalOpen(false)
+            setWhatsappModalContext(null)
+          }}
+          context={whatsappModalContext}
+          onSuccess={() => {
+            showToast('✓ Mensagem enviada com sucesso!')
+            loadAppointments()
+          }}
+        />
       )}
     </>
   )

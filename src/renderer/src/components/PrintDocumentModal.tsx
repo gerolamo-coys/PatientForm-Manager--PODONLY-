@@ -6,23 +6,27 @@ import {
   FileText,
   ClipboardList,
   Award,
-  Receipt
+  Receipt,
+  Camera
 } from 'lucide-react'
-import { Patient, PodiatryHistoryForm } from '../../../shared/types'
+import { Patient, PodiatryHistoryForm, PatientImage, FormsCustomizationConfig } from '../../../shared/types'
 import {
   ClinicInfo,
   generateFullRecordHtml,
   generateConsultationHtml,
   generateAttendanceCertificateHtml,
-  generatePaymentReceiptHtml
+  generatePaymentReceiptHtml,
+  generateEvolutionReportHtml
 } from '../utils/pdfTemplates'
+import { loadFormsConfig, DEFAULT_FORMS_CONFIG } from '../utils/formSchemaHelper'
 
-export type DocumentType = 'full_record' | 'consultation' | 'certificate' | 'receipt'
+export type DocumentType = 'full_record' | 'consultation' | 'certificate' | 'receipt' | 'evolution_report'
 
 interface PrintDocumentModalProps {
   patient: Patient
   forms?: PodiatryHistoryForm[]
   currentForm?: PodiatryHistoryForm
+  images?: (PatientImage & { base64: string | null })[]
   defaultDocType?: DocumentType
   onClose: () => void
 }
@@ -31,12 +35,15 @@ export default function PrintDocumentModal({
   patient,
   forms = [],
   currentForm,
+  images = [],
   defaultDocType,
   onClose
 }: PrintDocumentModalProps) {
   // Determine initial document type
   const initialType: DocumentType = defaultDocType || (currentForm ? 'consultation' : 'full_record')
   const [docType, setDocType] = useState<DocumentType>(initialType)
+  const [evolutionNotes, setEvolutionNotes] = useState('')
+  const [formsConfig, setFormsConfig] = useState<FormsCustomizationConfig>(DEFAULT_FORMS_CONFIG)
 
   // Clinic information
   const [clinic, setClinic] = useState<ClinicInfo>({
@@ -73,6 +80,7 @@ export default function PrintDocumentModal({
 
   // Load clinic information on mount
   useEffect(() => {
+    loadFormsConfig().then(setFormsConfig).catch(console.error)
     Promise.all([
       window.api?.getSetting?.('profile_clinic_name'),
       window.api?.getSetting?.('profile_clinic_address'),
@@ -102,23 +110,27 @@ export default function PrintDocumentModal({
       case 'full_record':
         return generateFullRecordHtml(patient, forms, effectiveClinic, {
           includeAlerts,
-          includeSignature
+          includeSignature,
+          formsConfig
         })
       case 'consultation':
         if (currentForm) {
           return generateConsultationHtml(patient, currentForm, effectiveClinic, {
             includeFootMap,
-            includeSignature
+            includeSignature,
+            formsConfig
           })
         } else if (forms.length > 0) {
           return generateConsultationHtml(patient, forms[0], effectiveClinic, {
             includeFootMap,
-            includeSignature
+            includeSignature,
+            formsConfig
           })
         }
         return generateFullRecordHtml(patient, forms, effectiveClinic, {
           includeAlerts,
-          includeSignature
+          includeSignature,
+          formsConfig
         })
       case 'certificate':
         return generateAttendanceCertificateHtml(patient, effectiveClinic, {
@@ -134,6 +146,11 @@ export default function PrintDocumentModal({
           description: receiptDesc,
           date: receiptDate
         })
+      case 'evolution_report':
+        return generateEvolutionReportHtml(patient, images, effectiveClinic, {
+          notes: evolutionNotes,
+          includeSignature
+        })
       default:
         return ''
     }
@@ -142,6 +159,7 @@ export default function PrintDocumentModal({
     patient,
     forms,
     currentForm,
+    images,
     effectiveClinic,
     includeAlerts,
     includeFootMap,
@@ -153,7 +171,9 @@ export default function PrintDocumentModal({
     receiptAmount,
     receiptMethod,
     receiptDesc,
-    receiptDate
+    receiptDate,
+    evolutionNotes,
+    formsConfig
   ])
 
   // Get sanitized default file name for download
@@ -169,6 +189,8 @@ export default function PrintDocumentModal({
         return `declaracao_comparecimento_${pName}_${today}.pdf`
       case 'receipt':
         return `recibo_${pName}_${today}.pdf`
+      case 'evolution_report':
+        return `relatorio_fotografico_${pName}_${today}.pdf`
     }
   }, [docType, patient])
 
@@ -490,6 +512,34 @@ export default function PrintDocumentModal({
                     <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontWeight: 400 }}>Comprovante financeiro de serviço</div>
                   </div>
                 </button>
+
+                {images && images.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setDocType('evolution_report')}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.6rem',
+                      padding: '0.6rem 0.8rem',
+                      borderRadius: '8px',
+                      border: '1px solid',
+                      borderColor: docType === 'evolution_report' ? 'var(--accent-color)' : 'var(--surface-border)',
+                      background: docType === 'evolution_report' ? '#ffffff' : 'transparent',
+                      color: docType === 'evolution_report' ? 'var(--accent-color)' : 'var(--text-primary)',
+                      fontWeight: docType === 'evolution_report' ? 700 : 500,
+                      fontSize: '0.82rem',
+                      cursor: 'pointer',
+                      textAlign: 'left'
+                    }}
+                  >
+                    <Camera size={16} />
+                    <div>
+                      <div>Relatório Fotográfico</div>
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontWeight: 400 }}>Evolução clínica ({images.length} fotos)</div>
+                    </div>
+                  </button>
+                )}
               </div>
             </div>
 
@@ -593,6 +643,28 @@ export default function PrintDocumentModal({
                     style={{ fontSize: '0.8rem', padding: '0.35rem 0.5rem' }}
                     value={receiptDate}
                     onChange={(e) => setReceiptDate(e.target.value)}
+                  />
+                </div>
+              </div>
+            )}
+
+            {docType === 'evolution_report' && (
+              <div style={{ background: '#ffffff', padding: '0.85rem', borderRadius: '8px', border: '1px solid var(--surface-border)' }}>
+                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#475569', marginBottom: '0.5rem' }}>
+                  Relatório Fotográfico:
+                </label>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+                  Total de <strong>{images.length}</strong> fotos cronológicas serão incluídas no relatório com suas tags, datas e observações.
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label" style={{ fontSize: '0.72rem' }}>Observações / Parecer Podológico</label>
+                  <textarea
+                    className="form-control"
+                    rows={4}
+                    style={{ fontSize: '0.8rem', padding: '0.45rem 0.6rem', resize: 'vertical' }}
+                    placeholder="Parecer sobre a evolução da queixa, cicatrização, orientações dadas ao paciente..."
+                    value={evolutionNotes}
+                    onChange={(e) => setEvolutionNotes(e.target.value)}
                   />
                 </div>
               </div>

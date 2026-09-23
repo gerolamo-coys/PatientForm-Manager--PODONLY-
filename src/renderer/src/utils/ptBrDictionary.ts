@@ -21,7 +21,6 @@ const PT_BR_DIRECT_DICT: Record<string, string> = {
   ja: 'já',
   la: 'lá',
   ha: 'há',
-  e: 'é',
   entao: 'então',
   que: 'que',
   para: 'para',

@@ -4,9 +4,10 @@ import {
   generateConsultationHtml,
   generateAttendanceCertificateHtml,
   generatePaymentReceiptHtml,
+  generateEvolutionReportHtml,
   ClinicInfo
 } from '../renderer/src/utils/pdfTemplates'
-import { Patient, PodiatryHistoryForm } from '../shared/types'
+import { Patient, PodiatryHistoryForm, PatientImage } from '../shared/types'
 
 describe('PDF Templates Module', () => {
   const mockClinic: ClinicInfo = {
@@ -144,6 +145,58 @@ describe('PDF Templates Module', () => {
       expect(html).toContain('Pix')
       expect(html).toContain('Tratamento de Onicocriptose e órtese')
       expect(html).toContain('01/03/2026')
+    })
+  })
+
+  describe('generateEvolutionReportHtml', () => {
+    const mockImages: (PatientImage & { base64: string | null })[] = [
+      {
+        id: 1,
+        patient_id: 1,
+        file_name: 'before.jpg',
+        description: 'Lesão inicial no hálux direito com inflamação periungueal',
+        tag: 'ANTES',
+        category: 'Hálux D',
+        photo_date: '2026-02-01',
+        created_at: '2026-02-01T10:00:00Z',
+        base64: 'data:image/jpeg;base64,mockbefore'
+      },
+      {
+        id: 2,
+        patient_id: 1,
+        file_name: 'after.jpg',
+        description: 'Cicatrização completa após espícula ectomia e curativo',
+        tag: 'DEPOIS',
+        category: 'Hálux D',
+        photo_date: '2026-02-20',
+        created_at: '2026-02-20T10:00:00Z',
+        base64: 'data:image/jpeg;base64,mockafter'
+      }
+    ]
+
+    it('should generate photographic evolution report with photos, tags, dates and notes', () => {
+      const html = generateEvolutionReportHtml(mockPatient, mockImages, mockClinic, {
+        notes: 'Paciente evoluiu com excelente cicatrização sem recidiva.',
+        includeSignature: true
+      })
+
+      expect(html).toContain('Relatório de Evolução Fotográfica')
+      expect(html).toContain('Carlos')
+      expect(html).toContain('Hálux D')
+      expect(html).toContain('Lesão inicial no hálux direito')
+      expect(html).toContain('Cicatrização completa após espícula ectomia')
+      expect(html).toContain('Depois')
+      expect(html).toContain('Antes')
+      expect(html).toContain('Paciente evoluiu com excelente cicatrização sem recidiva.')
+      expect(html).toContain('data:image/jpeg;base64,mockbefore')
+      expect(html).toContain('data:image/jpeg;base64,mockafter')
+      expect(html).toContain('01/02/2026')
+      expect(html).toContain('20/02/2026')
+    })
+
+    it('should handle empty image list gracefully', () => {
+      const html = generateEvolutionReportHtml(mockPatient, [], mockClinic)
+      expect(html).toContain('Nenhum registro fotográfico disponível')
     })
   })
 })

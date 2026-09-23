@@ -14,6 +14,7 @@ export interface Patient {
   medical_problems: string | null
   shoe_type: string | null
   nail_shape: string | null
+  custom_data?: string | null
   created_at: string
   updated_at: string
 }
@@ -29,6 +30,7 @@ export interface PodiatryHistoryForm {
   clinical_prescription: string | null
   general_observations: string | null
   procedures_performed: string | null
+  custom_data?: string | null
   created_at: string
   updated_at: string
 }
@@ -62,7 +64,7 @@ export type UpdateFormPayload = Partial<CreateFormPayload>
 
 export type SortMode = 'alphabetical' | 'last_created'
 
-export type AppointmentStatus = 'SCHEDULED' | 'CONFIRMED' | 'COMPLETED' | 'CANCELLED' | 'NO_SHOW'
+export type AppointmentStatus = 'SCHEDULED' | 'CONFIRMED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' | 'NO_SHOW'
 
 export interface Appointment {
   id: number
@@ -75,8 +77,62 @@ export interface Appointment {
   status: AppointmentStatus
   service_type: string | null
   price: number | null
+  custom_data?: string | null
+  whatsapp_reminder_sent_at?: string | null
+  patient_phone?: string | null
   created_at: string
   updated_at: string
+}
+
+export interface BirthdayPatient {
+  id: number
+  first_name: string
+  last_name: string
+  date_of_birth: string
+  phone: string | null
+  age: number
+  is_today?: boolean
+  birth_day_and_month?: string
+}
+
+export interface OverdueRecallPatient {
+  patient_id: number
+  first_name: string
+  last_name: string
+  phone: string | null
+  last_procedure_date: string
+  last_procedure_name: string | null
+  days_since_last_visit: number
+}
+
+export interface DueReceivable {
+  id: number
+  patient_id: number | null
+  patient_name: string | null
+  phone?: string | null
+  description: string
+  amount: number
+  due_date: string
+  is_overdue: boolean
+}
+
+export interface CalendarConflict {
+  id1: number
+  title1: string
+  id2: number
+  title2: string
+  start_time: string
+  end_time: string
+}
+
+export interface ClinicalNotifications {
+  overdueRecalls: OverdueRecallPatient[]
+  upcomingBirthdays: BirthdayPatient[]
+  dueReceivables: DueReceivable[]
+  calendarConflicts: CalendarConflict[]
+  hasGoogleSyncError: boolean
+  googleSyncErrorMessage?: string | null
+  totalAlertsCount: number
 }
 
 export type CreateAppointmentPayload = Omit<Appointment, 'id' | 'created_at' | 'updated_at'>
@@ -95,13 +151,20 @@ export interface GoogleAuthTokens {
   expiry_date: number
 }
 
+export type PhotoEvolutionTag = 'ANTES' | 'DURANTE' | 'DEPOIS' | 'RETORNO'
+
 export interface PatientImage {
   id: number
   patient_id: number
   file_name: string
   description: string | null
   created_at: string
+  tag?: PhotoEvolutionTag | string | null
+  category?: string | null
+  photo_date?: string | null
 }
+
+export type TransactionStatus = 'COMPLETED' | 'PENDING' | 'CANCELLED'
 
 export interface FinancialTransaction {
   id: number
@@ -112,15 +175,88 @@ export interface FinancialTransaction {
   category: string | null
   payment_method: string
   patient_id: number | null
+  status?: TransactionStatus
+  due_date?: string | null
+  payment_date?: string | null
+  installment_current?: number | null
+  installment_total?: number | null
+  notes?: string | null
+  fee_amount?: number | null
+  net_amount?: number | null
+  patient_name?: string | null
   created_at: string
 }
 
-export type CreateTransactionPayload = Omit<FinancialTransaction, 'id' | 'created_at'>
+export type CreateTransactionPayload = Omit<FinancialTransaction, 'id' | 'created_at' | 'patient_name'>
 export type UpdateTransactionPayload = Partial<CreateTransactionPayload>
 
 export interface FinancialSummary {
   totalIncome: number
   totalExpense: number
   netBalance: number
+  pendingIncome?: number
+  pendingExpense?: number
+  completedIncome?: number
+  completedExpense?: number
+  averageTicket?: number
+  totalTransactions?: number
+  completedCount?: number
+  pendingCount?: number
 }
+
+export type CustomFieldType =
+  | 'short_text'
+  | 'long_text'
+  | 'number'
+  | 'date'
+  | 'single_select'
+  | 'multi_checkbox'
+  | 'yes_no_table'
+
+export interface CustomFieldDefinition {
+  id: string
+  label: string
+  type: CustomFieldType
+  options?: string[]
+  placeholder?: string
+  required?: boolean
+  enabled: boolean
+}
+
+export interface CustomBlockDefinition {
+  id: string
+  title: string
+  enabled: boolean
+  fields: CustomFieldDefinition[]
+}
+
+export interface FormsCustomizationConfig {
+  patient: {
+    showAddress: boolean
+    showProfession: boolean
+    showPracticesSports: boolean
+    showPastMedicalHistory: boolean
+    showMedications: boolean
+    showMedicalProblems: boolean
+    showShoeType: boolean
+    showNailShape: boolean
+    medicalProblemsOptions: string[]
+    shoeTypeOptions: string[]
+    nailShapeOptions: string[]
+    customBlocks: CustomBlockDefinition[]
+  }
+  consultation: {
+    showDermatologicalPathologies: boolean
+    showFootSpecificHistory: boolean
+    showClinicalPrescription: boolean
+    showGeneralObservations: boolean
+    dermatologicalPathologiesOptions: string[]
+    customBlocks: CustomBlockDefinition[]
+  }
+  appointment: {
+    serviceOptions: { name: string; defaultPrice?: number }[]
+    customFields: CustomFieldDefinition[]
+  }
+}
+
 

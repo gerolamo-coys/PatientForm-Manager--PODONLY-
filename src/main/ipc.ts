@@ -21,18 +21,22 @@ import {
   createAppointment,
   updateAppointment,
   deleteAppointment,
+  markPassedAppointmentsAsCompleted,
   getSetting,
   setSetting,
   getPatientImages,
   addPatientImage,
   updatePatientImageDescription,
+  updatePatientImageMetadata,
   deletePatientImage,
   createTransaction,
   updateTransaction,
   deleteTransaction,
   getTransactions,
   getFinancialSummary,
-  getDb
+  getDb,
+  getTodayBirthdays,
+  getClinicalNotifications
 } from './database'
 import { authenticateGoogle, parseCredentialsJson, hasGoogleCredentials, cancelGoogleAuthentication } from './googleAuth'
 import { pullFromGoogleCalendar, createGoogleEvent, updateGoogleEvent, deleteGoogleEvent } from './googleCalendar'
@@ -42,10 +46,25 @@ import {
   logoutWhatsapp,
   getWhatsappStatus,
   sendTestWhatsappMessage,
-  sendSingleAppointmentReminder
+  sendSingleAppointmentReminder,
+  sendCustomPatientMessage
 } from './whatsappService'
+import { 
+  hasAdminUser, 
+  setupAdmin, 
+  unlockSession, 
+  lockSession, 
+  isSessionLocked, 
+  resetInactivityTimer,
+  isSessionLockEnabled,
+  getSecurityStatus,
+  changeAdminPassword,
+  removeSessionLock,
+  enableSessionLock,
+  getInactivityTimeout,
+  setInactivityTimeout
+} from './authService'
 import { validateLicense, checkLicenseStatus, getSubscriptionDetails, cancelSubscription } from './licenseManager'
-import { hasAdminUser, setupAdmin, unlockSession, lockSession, isSessionLocked, resetInactivityTimer } from './authService'
 import { exportEncryptedBackup } from './backupEngine'
 import { getAuditLogs } from './auditService'
 import archiverModule from 'archiver'
@@ -201,6 +220,20 @@ export function registerIpcHandlers() {
     deleteAppointment(id)
   })
 
+  ipcMain.handle('markPassedAppointmentsAsCompleted', async (_, upToIsoString?: string) => {
+    try {
+      const safeCutoff = typeof upToIsoString === 'string' && !isNaN(Date.parse(upToIsoString))
+        ? upToIsoString
+        : new Date().toISOString()
+      const count = markPassedAppointmentsAsCompleted(safeCutoff)
+      console.log(`[Appointments] markPassedAppointmentsAsCompleted finalizou. ${count} consulta(s) atualizada(s).`)
+      return count
+    } catch (err: any) {
+      console.error('[Appointments] Erro em markPassedAppointmentsAsCompleted:', err)
+      throw new Error(err?.message || 'Erro ao processar consultas passadas no banco de dados.')
+    }
+  })
+
   ipcMain.handle('isGoogleConnected', async () => {
     const tokens = loadGoogleTokens()
     return Boolean(tokens && (tokens.access_token || tokens.refresh_token))
@@ -264,9 +297,29 @@ export function registerIpcHandlers() {
     }
   })
 
-  ipcMain.handle('sendSingleAppointmentReminder', async (_, appointmentId: number) => {
+  ipcMain.handle('sendSingleAppointmentReminder', async (_, appointmentId: number, customTemplate?: string) => {
     if (!isValidId(appointmentId)) return { success: false, error: 'ID inválido.' }
-    return await sendSingleAppointmentReminder(appointmentId)
+    const safeTemplate = typeof customTemplate === 'string' && customTemplate.trim().length > 0 ? customTemplate.slice(0, 1000) : undefined
+    return await sendSingleAppointmentReminder(appointmentId, safeTemplate)
+  })
+
+  ipcMain.handle('sendCustomPatientMessage', async (_, phone: string, message: string, appointmentId?: number) => {
+    if (typeof phone !== 'string' || !phone.trim()) {
+      return { success: false, error: 'Telefone inválido.' }
+    }
+    if (typeof message !== 'string' || !message.trim()) {
+      return { success: false, error: 'Mensagem vazia.' }
+    }
+    const safeApptId = typeof appointmentId === 'number' && isValidId(appointmentId) ? appointmentId : undefined
+    return await sendCustomPatientMessage(phone, message, safeApptId)
+  })
+
+  ipcMain.handle('getTodayBirthdays', async () => {
+    return getTodayBirthdays()
+  })
+
+  ipcMain.handle('getClinicalNotifications', async () => {
+    return getClinicalNotifications()
   })
 
   ipcMain.handle('validateLicense', async (_, key: string) => {
@@ -360,7 +413,7 @@ export function registerIpcHandlers() {
     return getPatientImages(patientId)
   })
 
-  ipcMain.handle('pickAndSavePatientImage', async (_, patientId: number) => {
+  ipcMain.handle('pickAndSavePatientImage', async (_, patientId: number, metadata?: { description?: string; tag?: string; category?: string; photo_date?: string }) => {
     if (!isValidId(patientId)) return null
 
     const { canceled, filePaths } = await dialog.showOpenDialog({
@@ -400,7 +453,7 @@ export function registerIpcHandlers() {
     const targetPath = path.join(targetDir, fileName)
     await fs.copyFile(sourcePath, targetPath)
 
-    const id = addPatientImage(patientId, fileName)
+    const id = addPatientImage(patientId, fileName, metadata)
     return id
   })
 
@@ -408,6 +461,20 @@ export function registerIpcHandlers() {
     if (!isValidId(id)) return
     const safeDesc = typeof description === 'string' ? description.slice(0, 1000) : ''
     updatePatientImageDescription(id, safeDesc)
+  })
+
+  ipcMain.handle('updatePatientImageMetadata', (_, id: number, data: { description?: string; tag?: string; category?: string; photo_date?: string }) => {
+    if (!isValidId(id)) return
+    const safeDesc = typeof data?.description === 'string' ? data.description.slice(0, 1000) : undefined
+    const safeTag = typeof data?.tag === 'string' ? data.tag.slice(0, 50) : undefined
+    const safeCategory = typeof data?.category === 'string' ? data.category.slice(0, 100) : undefined
+    const safeDate = typeof data?.photo_date === 'string' ? data.photo_date.slice(0, 20) : undefined
+    updatePatientImageMetadata(id, {
+      description: safeDesc,
+      tag: safeTag,
+      category: safeCategory,
+      photo_date: safeDate
+    })
   })
 
   ipcMain.handle('deletePatientImage', async (_, id: number, fileName: string) => {
@@ -825,6 +892,28 @@ export function registerIpcHandlers() {
   })
   ipcMain.handle('isSessionLocked', () => {
     return isSessionLocked()
+  })
+  ipcMain.handle('isSessionLockEnabled', () => {
+    return isSessionLockEnabled()
+  })
+  ipcMain.handle('getSecurityStatus', () => {
+    return getSecurityStatus()
+  })
+  ipcMain.handle('changeAdminPassword', (_, currentPassword: string, newPassword: string) => {
+    return changeAdminPassword(currentPassword, newPassword)
+  })
+  ipcMain.handle('removeSessionLock', (_, currentPassword?: string) => {
+    return removeSessionLock(currentPassword)
+  })
+  ipcMain.handle('enableSessionLock', (_, password: string) => {
+    return enableSessionLock(password)
+  })
+  ipcMain.handle('getInactivityTimeout', () => {
+    return getInactivityTimeout()
+  })
+  ipcMain.handle('setInactivityTimeout', (_, minutes: number) => {
+    setInactivityTimeout(minutes)
+    return true
   })
   ipcMain.handle('activityPing', () => {
     resetInactivityTimer()

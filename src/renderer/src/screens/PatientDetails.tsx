@@ -1,11 +1,15 @@
 import React, { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import { Save, X, User, Activity, AlertCircle, Plus, Calendar, Clock, Image as ImageIcon, Trash2, Search, Maximize2, Upload, Split, Printer } from 'lucide-react'
-import { Patient, PodiatryHistoryForm, PatientImage } from '../../../shared/types'
+import { Save, X, User, Activity, AlertCircle, Plus, Calendar, Clock, Search, Printer, MessageCircle } from 'lucide-react'
+import { Patient, PodiatryHistoryForm, PatientImage, FormsCustomizationConfig } from '../../../shared/types'
 import { calculateAge } from '../utils/ageHelper'
 import BeforeAfterComparator from '../components/BeforeAfterComparator'
-import PrintDocumentModal from '../components/PrintDocumentModal'
+import PrintDocumentModal, { DocumentType } from '../components/PrintDocumentModal'
+import WhatsAppMessageModal from '../components/WhatsAppMessageModal'
+import PatientPhotoTimeline from '../components/PatientPhotoTimeline'
+import DynamicCustomFieldsRenderer from '../components/DynamicCustomFieldsRenderer'
+import { DEFAULT_FORMS_CONFIG, loadFormsConfig, parseCustomData } from '../utils/formSchemaHelper'
 
 export default function PatientDetails() {
   const { id } = useParams<{ id: string }>()
@@ -26,8 +30,11 @@ export default function PatientDetails() {
     allergies: '',
     medical_problems: '{}',
     shoe_type: '[]',
-    nail_shape: '[]'
+    nail_shape: '[]',
+    custom_data: '{}'
   })
+
+  const [formsConfig, setFormsConfig] = useState<FormsCustomizationConfig>(structuredClone(DEFAULT_FORMS_CONFIG))
   
   const [forms, setForms] = useState<PodiatryHistoryForm[]>([])
   const [images, setImages] = useState<(PatientImage & { base64: string | null })[]>([])
@@ -43,11 +50,18 @@ export default function PatientDetails() {
   const [beforeImageId, setBeforeImageId] = useState<number | null>(null)
   const [afterImageId, setAfterImageId] = useState<number | null>(null)
   const [showPrintModal, setShowPrintModal] = useState(false)
+  const [printDocType, setPrintDocType] = useState<DocumentType>('full_record')
+  const [showWhatsAppModal, setShowWhatsAppModal] = useState(false)
 
-  const handleOpenComparison = () => {
+  const handleOpenComparison = (beforeId?: number, afterId?: number) => {
     if (images.length < 2) return
-    setBeforeImageId(images[0].id)
-    setAfterImageId(images[images.length - 1].id)
+    if (beforeId && afterId) {
+      setBeforeImageId(beforeId)
+      setAfterImageId(afterId)
+    } else {
+      setBeforeImageId(images[images.length - 1]?.id || images[0]?.id)
+      setAfterImageId(images[0]?.id)
+    }
     setShowComparisonModal(true)
   }
 
@@ -57,6 +71,12 @@ export default function PatientDetails() {
     if (appContent) {
       appContent.scrollTop = 0
     }
+    loadFormsConfig().then(setFormsConfig)
+    const handleConfigUpdated = () => {
+      loadFormsConfig().then(setFormsConfig)
+    }
+    window.addEventListener('podonly-forms-config-updated', handleConfigUpdated)
+    return () => window.removeEventListener('podonly-forms-config-updated', handleConfigUpdated)
   }, [])
 
   useEffect(() => {
@@ -103,7 +123,8 @@ export default function PatientDetails() {
             allergies: patientData.allergies || '',
             medical_problems: patientData.medical_problems || '{}',
             shoe_type: patientData.shoe_type || '',
-            nail_shape: patientData.nail_shape || '[]'
+            nail_shape: patientData.nail_shape || '[]',
+            custom_data: patientData.custom_data || '{}'
           })
           
           const formsData = await window.api.getPatientForms(patientId)
@@ -133,6 +154,7 @@ export default function PatientDetails() {
         return { ...img, base64 }
       }))
       setImages(imagesWithBase64)
+      window.dispatchEvent(new CustomEvent('podonly-patient-updated'))
     }
   }
 
@@ -140,11 +162,28 @@ export default function PatientDetails() {
     if (!confirm('Tem certeza que deseja apagar esta foto?')) return
     await window.api.deletePatientImage(imgId, fileName)
     setImages(images.filter(i => i.id !== imgId))
+    window.dispatchEvent(new CustomEvent('podonly-patient-updated'))
   }
 
-  const handleUpdateDescription = async (imgId: number, text: string) => {
-    await window.api.updatePatientImageDescription(imgId, text)
-    setImages(images.map(i => i.id === imgId ? { ...i, description: text } : i))
+  const handleUpdateMetadata = async (
+    imgId: number,
+    data: { description?: string; tag?: string; category?: string; photo_date?: string }
+  ) => {
+    await window.api.updatePatientImageMetadata(imgId, data)
+    setImages(prev =>
+      prev.map(i =>
+        i.id === imgId
+          ? {
+              ...i,
+              ...(data.description !== undefined ? { description: data.description } : {}),
+              ...(data.tag !== undefined ? { tag: data.tag } : {}),
+              ...(data.category !== undefined ? { category: data.category } : {}),
+              ...(data.photo_date !== undefined ? { photo_date: data.photo_date } : {})
+            }
+          : i
+      )
+    )
+    window.dispatchEvent(new CustomEvent('podonly-patient-updated'))
   }
 
 
@@ -218,15 +257,26 @@ export default function PatientDetails() {
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
           {isEditing && (
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => setShowPrintModal(true)}
-              style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--accent-color)', borderColor: 'var(--accent-color)' }}
-              title="Imprimir ou exportar Prontuário em PDF"
-            >
-              <Printer size={16} /> Imprimir / PDF
-            </button>
+            <>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setShowWhatsAppModal(true)}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#16a34a', borderColor: 'rgba(22, 163, 74, 0.4)' }}
+                title="Enviar mensagem ou orientações pelo WhatsApp"
+              >
+                <MessageCircle size={16} /> WhatsApp
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setShowPrintModal(true)}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--accent-color)', borderColor: 'var(--accent-color)' }}
+                title="Imprimir ou exportar Prontuário em PDF"
+              >
+                <Printer size={16} /> Imprimir / PDF
+              </button>
+            </>
           )}
           <button type="button" className="btn btn-secondary" onClick={() => navigate('/patients')}>
             <X size={18} /> Voltar
@@ -317,101 +367,176 @@ export default function PatientDetails() {
             <label className="form-label">Telefone</label>
             <input type="tel" className="form-control" name="phone" value={patient.phone || ''} onChange={handlePatientChange} />
           </div>
-          <div className="form-group">
-            <label className="form-label">Endereço</label>
-            <input type="text" className="form-control" name="address" value={patient.address || ''} onChange={handlePatientChange} />
-          </div>
-        </div>
-
-        <div className="grid-2">
-          <div className="form-group">
-            <label className="form-label">Profissão</label>
-            <input type="text" className="form-control" name="profession" value={patient.profession || ''} onChange={handlePatientChange} />
-          </div>
-          <div className="form-group">
-            <label className="form-label">Pratica atividade Fisica?</label>
-            <input type="text" className="form-control" name="practices_sports" value={patient.practices_sports || ''} onChange={handlePatientChange} placeholder="Sim/Não, qual?" />
-          </div>
-        </div>
-
-        <h3 className="section-title" style={{ marginTop: '2rem' }}>Histórico Médico</h3>
-        <div className="grid-2">
-          <div className="form-group">
-            <label className="form-label">Histórico Médico Pregresso</label>
-            <textarea className="form-control" name="past_medical_history" value={patient.past_medical_history || ''} onChange={handlePatientChange} />
-          </div>
-          <div className="form-group">
-            <label className="form-label">Medicamentos em Uso</label>
-            <textarea className="form-control" name="medications" value={patient.medications || ''} onChange={handlePatientChange} />
-          </div>
-        </div>
-
-        <div className="form-group">
-          <label className="form-label">Problemas Médicos (Sim/Não)</label>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem', marginTop: '0.5rem' }}>
-            {[
-              'Alergia', 'Cardiopatia', 'Hipertensão', 'Diabetes', 'Colesterol', 
-              'Fumante', 'Artrite Reumatóide', 'Artrose', 'Gota', 'Possui Marca Passo'
-            ].map(prob => {
-              let currentVal = ''
-              try {
-                currentVal = JSON.parse(patient.medical_problems || '{}')[prob] || ''
-              } catch {}
-              return (
-                <div key={prob} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '6px' }}>
-                  <span style={{ fontSize: '0.9rem' }}>{prob}</span>
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <label style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
-                      <input type="radio" name={`med_prob_${prob}`} checked={currentVal === 'Sim'} onChange={() => handleMedicalProblemChange(prob, 'Sim')} /> Sim
-                    </label>
-                    <label style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
-                      <input type="radio" name={`med_prob_${prob}`} checked={currentVal === 'Não'} onChange={() => handleMedicalProblemChange(prob, 'Não')} /> Não
-                    </label>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-
-        <div className="grid-2" style={{ marginTop: '1rem' }}>
-          <div className="form-group">
-            <label className="form-label">Tipo de calçado que costuma usar</label>
-            <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
-              {['Aberto', 'Fechado'].map(item => {
-                let isChecked = false
-                try {
-                  isChecked = JSON.parse(patient.shoe_type || '[]').includes(item)
-                } catch {
-                  if (patient.shoe_type && patient.shoe_type.toLowerCase().includes(item.toLowerCase())) isChecked = true;
-                }
-                return (
-                  <label key={item} style={{ fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                    <input type="checkbox" checked={isChecked} onChange={() => handleCheckboxArrayChange('shoe_type', item)} /> {item}
-                  </label>
-                )
-              })}
+          {(formsConfig.patient.showAddress || Boolean(patient.address)) && (
+            <div className="form-group">
+              <label className="form-label">Endereço</label>
+              <input type="text" className="form-control" name="address" value={patient.address || ''} onChange={handlePatientChange} />
             </div>
+          )}
+        </div>
+
+        {((formsConfig.patient.showProfession || Boolean(patient.profession)) ||
+          (formsConfig.patient.showPracticesSports || Boolean(patient.practices_sports))) && (
+          <div className="grid-2">
+            {(formsConfig.patient.showProfession || Boolean(patient.profession)) && (
+              <div className="form-group">
+                <label className="form-label">Profissão</label>
+                <input type="text" className="form-control" name="profession" value={patient.profession || ''} onChange={handlePatientChange} />
+              </div>
+            )}
+            {(formsConfig.patient.showPracticesSports || Boolean(patient.practices_sports)) && (
+              <div className="form-group">
+                <label className="form-label">Pratica atividade Fisica?</label>
+                <input type="text" className="form-control" name="practices_sports" value={patient.practices_sports || ''} onChange={handlePatientChange} placeholder="Sim/Não, qual?" />
+              </div>
+            )}
           </div>
+        )}
+
+        {(formsConfig.patient.showPastMedicalHistory ||
+          formsConfig.patient.showMedications ||
+          formsConfig.patient.showMedicalProblems ||
+          formsConfig.patient.showShoeType ||
+          formsConfig.patient.showNailShape ||
+          Boolean(patient.past_medical_history) ||
+          Boolean(patient.medications)) && (
+          <h3 className="section-title" style={{ marginTop: '2rem' }}>Histórico Médico</h3>
+        )}
+
+        {((formsConfig.patient.showPastMedicalHistory || Boolean(patient.past_medical_history)) ||
+          (formsConfig.patient.showMedications || Boolean(patient.medications))) && (
+          <div className="grid-2">
+            {(formsConfig.patient.showPastMedicalHistory || Boolean(patient.past_medical_history)) && (
+              <div className="form-group">
+                <label className="form-label">Histórico Médico Pregresso</label>
+                <textarea className="form-control" name="past_medical_history" value={patient.past_medical_history || ''} onChange={handlePatientChange} />
+              </div>
+            )}
+            {(formsConfig.patient.showMedications || Boolean(patient.medications)) && (
+              <div className="form-group">
+                <label className="form-label">Medicamentos em Uso</label>
+                <textarea className="form-control" name="medications" value={patient.medications || ''} onChange={handlePatientChange} />
+              </div>
+            )}
+          </div>
+        )}
+
+        {formsConfig.patient.showMedicalProblems && (
           <div className="form-group">
-            <label className="form-label">Formato de Unha</label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '0.5rem' }}>
-              {[
-                'Normal', 'Telha', 'Funil', 'Gancho', 'Caracol', 'Distrófica', 'Torquês'
-              ].map(item => {
-                let isChecked = false
+            <label className="form-label">Problemas Médicos (Sim/Não)</label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem', marginTop: '0.5rem' }}>
+              {(() => {
+                let savedMap: Record<string, string> = {}
                 try {
-                  isChecked = JSON.parse(patient.nail_shape || '[]').includes(item)
+                  savedMap = JSON.parse(patient.medical_problems || '{}')
                 } catch {}
-                return (
-                  <label key={item} style={{ fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                    <input type="checkbox" checked={isChecked} onChange={() => handleCheckboxArrayChange('nail_shape', item)} /> {item}
-                  </label>
+                const mergedOptions = Array.from(
+                  new Set([
+                    ...formsConfig.patient.medicalProblemsOptions,
+                    ...Object.keys(savedMap)
+                  ])
                 )
-              })}
+                return mergedOptions.map(prob => {
+                  const currentVal = savedMap[prob] || ''
+                  return (
+                    <div key={prob} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '6px' }}>
+                      <span style={{ fontSize: '0.9rem' }}>{prob}</span>
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <label style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                          <input type="radio" name={`med_prob_${prob}`} checked={currentVal === 'Sim'} onChange={() => handleMedicalProblemChange(prob, 'Sim')} /> Sim
+                        </label>
+                        <label style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                          <input type="radio" name={`med_prob_${prob}`} checked={currentVal === 'Não'} onChange={() => handleMedicalProblemChange(prob, 'Não')} /> Não
+                        </label>
+                      </div>
+                    </div>
+                  )
+                })
+              })()}
             </div>
           </div>
-        </div>
+        )}
+
+        {(formsConfig.patient.showShoeType || formsConfig.patient.showNailShape) && (
+          <div className="grid-2" style={{ marginTop: '1rem' }}>
+            {formsConfig.patient.showShoeType && (
+              <div className="form-group">
+                <label className="form-label">Tipo de calçado que costuma usar</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', marginTop: '0.5rem' }}>
+                  {(() => {
+                    let savedShoes: string[] = []
+                    try {
+                      savedShoes = JSON.parse(patient.shoe_type || '[]')
+                    } catch {}
+                    const mergedShoes = Array.from(
+                      new Set([...formsConfig.patient.shoeTypeOptions, ...(Array.isArray(savedShoes) ? savedShoes : [])])
+                    )
+                    return mergedShoes.map(item => {
+                      let isChecked = false
+                      try {
+                        isChecked = JSON.parse(patient.shoe_type || '[]').includes(item)
+                      } catch {
+                        if (patient.shoe_type && patient.shoe_type.toLowerCase().includes(item.toLowerCase())) isChecked = true
+                      }
+                      return (
+                        <label key={item} style={{ fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                          <input type="checkbox" checked={isChecked} onChange={() => handleCheckboxArrayChange('shoe_type', item)} /> {item}
+                        </label>
+                      )
+                    })
+                  })()}
+                </div>
+              </div>
+            )}
+
+            {formsConfig.patient.showNailShape && (
+              <div className="form-group">
+                <label className="form-label">Formato de Unha</label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '0.5rem' }}>
+                  {(() => {
+                    let savedNails: string[] = []
+                    try {
+                      savedNails = JSON.parse(patient.nail_shape || '[]')
+                    } catch {}
+                    const mergedNails = Array.from(
+                      new Set([...formsConfig.patient.nailShapeOptions, ...(Array.isArray(savedNails) ? savedNails : [])])
+                    )
+                    return mergedNails.map(item => {
+                      let isChecked = false
+                      try {
+                        isChecked = JSON.parse(patient.nail_shape || '[]').includes(item)
+                      } catch {}
+                      return (
+                        <label key={item} style={{ fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                          <input type="checkbox" checked={isChecked} onChange={() => handleCheckboxArrayChange('nail_shape', item)} /> {item}
+                        </label>
+                      )
+                    })
+                  })()}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Render Dynamic Custom Blocks for Patient */}
+        {formsConfig.patient.customBlocks
+          .filter(b => b.enabled || b.fields.some(f => parseCustomData(patient.custom_data)[f.id] !== undefined))
+          .map(block => (
+            <div key={block.id} style={{ marginTop: '2rem' }}>
+              <h3 className="section-title">{block.title}</h3>
+              <DynamicCustomFieldsRenderer
+                fields={block.fields}
+                customDataObj={parseCustomData(patient.custom_data)}
+                onChange={updatedObj =>
+                  setPatient(prev => ({
+                    ...prev,
+                    custom_data: JSON.stringify(updatedObj)
+                  }))
+                }
+              />
+            </div>
+          ))}
 
         <div className="form-actions" style={{ justifyContent: 'flex-start', marginTop: '2rem' }}>
           <button type="submit" className="btn btn-primary">
@@ -497,185 +622,23 @@ export default function PatientDetails() {
       )}
 
       {isEditing && (
-        <div style={{ marginTop: '3rem', borderTop: '1px solid var(--surface-border)', paddingTop: '2rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-            <div>
-              <h3 className="section-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <ImageIcon color="var(--accent-color)" size={20} /> Galeria de Fotos do Tratamento
-              </h3>
-              <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                Anexe fotos dos pés e acompanhe a evolução dos procedimentos clínicos.
-              </p>
-            </div>
-            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-              {images.length >= 2 && (
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={handleOpenComparison}
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--accent-color)', borderColor: 'var(--accent-color)' }}
-                >
-                  <Split size={16} /> Comparar Fotos (Antes / Depois)
-                </button>
-              )}
-              <button type="button" className="btn btn-primary" onClick={handleAddImage} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <Plus size={18} /> Adicionar Foto
-              </button>
-            </div>
-          </div>
-
-          {images.length > 0 ? (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '1.25rem' }}>
-              {images.map(img => (
-                <div
-                  key={img.id}
-                  className="glass-card"
-                  style={{
-                    padding: 0,
-                    overflow: 'hidden',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    borderRadius: '12px',
-                    border: '1px solid var(--surface-border)',
-                    boxShadow: '0 4px 12px rgba(0,0,0,0.03)',
-                    transition: 'transform 0.2s ease, box-shadow 0.2s ease'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.transform = 'translateY(-2px)'
-                    e.currentTarget.style.boxShadow = '0 8px 20px rgba(0,0,0,0.06)'
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.transform = 'translateY(0)'
-                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.03)'
-                  }}
-                >
-                  {/* Photo Thumbnail Container */}
-                  <div style={{ position: 'relative', width: '100%', height: '210px', overflow: 'hidden', background: '#f1f5f9' }}>
-                    {img.base64 ? (
-                      <img 
-                        src={img.base64} 
-                        alt={img.description || 'Foto do tratamento'} 
-                        onClick={() => { setFullscreenImage(img.base64); setZoom(1); }}
-                        style={{
-                          width: '100%',
-                          height: '100%',
-                          objectFit: 'cover',
-                          cursor: 'zoom-in',
-                          transition: 'transform 0.3s ease'
-                        }} 
-                        onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.04)'}
-                        onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
-                      />
-                    ) : (
-                      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-                        Imagem não disponível
-                      </div>
-                    )}
-
-                    {/* Top Floating Delete Action */}
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteImage(img.id, img.file_name)}
-                      title="Excluir foto"
-                      style={{
-                        position: 'absolute',
-                        top: '0.6rem',
-                        right: '0.6rem',
-                        background: 'rgba(255, 255, 255, 0.9)',
-                        backdropFilter: 'blur(4px)',
-                        border: '1px solid rgba(239, 68, 68, 0.3)',
-                        borderRadius: '50%',
-                        width: '32px',
-                        height: '32px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        color: 'var(--danger-color)',
-                        cursor: 'pointer',
-                        boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
-                        transition: 'all 0.15s ease'
-                      }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = '#ef4444'; e.currentTarget.style.color = 'white'; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.9)'; e.currentTarget.style.color = 'var(--danger-color)'; }}
-                    >
-                      <Trash2 size={15} />
-                    </button>
-
-                    {/* Top Floating Zoom Action */}
-                    {img.base64 && (
-                      <button
-                        type="button"
-                        onClick={() => { setFullscreenImage(img.base64); setZoom(1); }}
-                        title="Ampliar imagem"
-                        style={{
-                          position: 'absolute',
-                          bottom: '0.6rem',
-                          right: '0.6rem',
-                          background: 'rgba(0, 0, 0, 0.65)',
-                          backdropFilter: 'blur(4px)',
-                          border: 'none',
-                          borderRadius: '6px',
-                          padding: '0.25rem 0.5rem',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '0.25rem',
-                          color: 'white',
-                          fontSize: '0.72rem',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        <Maximize2 size={12} /> Ampliar
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Clean Description Input */}
-                  <div style={{ padding: '0.75rem', background: '#ffffff' }}>
-                    <input 
-                      type="text" 
-                      className="form-control" 
-                      placeholder="Descrição da foto (ex: Antes do tratamento)..." 
-                      value={img.description || ''} 
-                      onChange={(e) => setImages(images.map(i => i.id === img.id ? { ...i, description: e.target.value } : i))}
-                      onBlur={(e) => handleUpdateDescription(img.id, e.target.value)}
-                      style={{
-                        fontSize: '0.85rem',
-                        padding: '0.45rem 0.65rem',
-                        borderRadius: '6px',
-                        border: '1px solid var(--surface-border)',
-                        width: '100%',
-                        background: '#f8fafc'
-                      }}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div
-              onClick={handleAddImage}
-              style={{
-                padding: '3rem 2rem',
-                textAlign: 'center',
-                border: '2px dashed var(--surface-border)',
-                borderRadius: '12px',
-                background: 'rgba(241, 245, 249, 0.4)',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease'
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent-color)'; e.currentTarget.style.background = 'rgba(14, 145, 168, 0.04)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--surface-border)'; e.currentTarget.style.background = 'rgba(241, 245, 249, 0.4)'; }}
-            >
-              <Upload size={36} style={{ marginBottom: '0.75rem', color: 'var(--accent-color)' }} />
-              <h4 style={{ margin: '0 0 0.35rem 0', fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                Nenhuma foto importada ainda
-              </h4>
-              <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                Clique aqui para selecionar e anexar fotos do tratamento do paciente.
-              </p>
-            </div>
-          )}
-        </div>
+        <PatientPhotoTimeline
+          patientId={parseInt(id || '0', 10)}
+          patientName={`${patient.first_name} ${patient.last_name}`.trim()}
+          images={images}
+          onAddImage={handleAddImage}
+          onDeleteImage={handleDeleteImage}
+          onUpdateMetadata={handleUpdateMetadata}
+          onOpenComparison={handleOpenComparison}
+          onOpenPrintReport={() => {
+            setPrintDocType('evolution_report')
+            setShowPrintModal(true)
+          }}
+          onFullscreenZoom={(base64) => {
+            setFullscreenImage(base64)
+            setZoom(1)
+          }}
+        />
       )}
 
       {fullscreenImage && createPortal(
@@ -754,10 +717,32 @@ export default function PatientDetails() {
         <PrintDocumentModal
           patient={{ ...patient, id: Number(id) } as Patient}
           forms={forms}
-          defaultDocType="full_record"
-          onClose={() => setShowPrintModal(false)}
+          images={images}
+          defaultDocType={printDocType}
+          onClose={() => {
+            setShowPrintModal(false)
+            setPrintDocType('full_record')
+          }}
         />,
         document.body
+      )}
+
+      {/* WhatsApp Messaging Modal */}
+      {showWhatsAppModal && (
+        <WhatsAppMessageModal
+          isOpen={showWhatsAppModal}
+          onClose={() => setShowWhatsAppModal(false)}
+          context={{
+            patientId: Number(id),
+            patientName: `${patient.first_name} ${patient.last_name}`.trim(),
+            phone: patient.phone || '',
+            reason: 'post_procedure'
+          }}
+          onSuccess={() => {
+            setSaveSuccess(true)
+            setTimeout(() => setSaveSuccess(false), 3000)
+          }}
+        />
       )}
 
       <style>{`

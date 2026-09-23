@@ -1,5 +1,51 @@
-import { Patient, PodiatryHistoryForm } from '../../../shared/types'
+import { Patient, PodiatryHistoryForm, PatientImage, CustomBlockDefinition, FormsCustomizationConfig } from '../../../shared/types'
 import { calculateAge } from './ageHelper'
+import { DEFAULT_FORMS_CONFIG, parseCustomData } from './formSchemaHelper'
+
+function renderCustomBlocksHtml(blocks: CustomBlockDefinition[], customDataJson: string | null | undefined): string {
+  const customMap = parseCustomData(customDataJson)
+  if (!blocks || blocks.length === 0 || Object.keys(customMap).length === 0) return ''
+
+  const renderedBlocks: string[] = []
+  for (const block of blocks) {
+    const itemsHtml: string[] = []
+    for (const field of block.fields) {
+      const val = customMap[field.id]
+      if (val === undefined || val === null || val === '') continue
+      if (Array.isArray(val) && val.length === 0) continue
+
+      let formattedVal = ''
+      if (Array.isArray(val)) {
+        formattedVal = val.map((v: string) => `<span class="tag tag-highlight">${escapeHtml(String(v))}</span>`).join('')
+      } else if (typeof val === 'object') {
+        const subItems = Object.entries(val as Record<string, { status?: boolean; details?: string }>)
+          .filter(([, item]) => item && (item.status === true || (item.details && item.details.trim())))
+          .map(([k, item]) => `${escapeHtml(k)}: <strong>${item.status ? 'Sim' : 'Não'}</strong>${item.details ? ` (${escapeHtml(item.details)})` : ''}`)
+        if (subItems.length === 0) continue
+        formattedVal = subItems.join(' • ')
+      } else {
+        formattedVal = escapeHtml(String(val))
+      }
+
+      itemsHtml.push(`
+        <div style="margin-bottom: 5px; font-size: 8.5pt;">
+          <strong>${escapeHtml(field.label)}:</strong> ${formattedVal}
+        </div>
+      `)
+    }
+
+    if (itemsHtml.length > 0) {
+      renderedBlocks.push(`
+        <div class="section-card">
+          <div class="section-title">${escapeHtml(block.title)}</div>
+          ${itemsHtml.join('')}
+        </div>
+      `)
+    }
+  }
+
+  return renderedBlocks.join('')
+}
 
 export interface ClinicInfo {
   name?: string | null
@@ -323,10 +369,11 @@ export function generateFullRecordHtml(
   patient: Patient,
   forms: PodiatryHistoryForm[],
   clinic: ClinicInfo,
-  options?: { includeAlerts?: boolean; includeSignature?: boolean }
+  options?: { includeAlerts?: boolean; includeSignature?: boolean; formsConfig?: FormsCustomizationConfig }
 ): string {
   const includeAlerts = options?.includeAlerts !== false
   const includeSignature = options?.includeSignature !== false
+  const activeConfig = options?.formsConfig || DEFAULT_FORMS_CONFIG
 
   const age = calculateAge(patient.date_of_birth)
   const ageText = age !== null ? `${age} anos` : '-'
@@ -438,6 +485,8 @@ export function generateFullRecordHtml(
         </div>
       </div>
 
+      ${renderCustomBlocksHtml(activeConfig.patient.customBlocks, patient.custom_data)}
+
       <!-- Historical Consultations -->
       <div class="section-card">
         <div class="section-title">
@@ -486,10 +535,11 @@ export function generateConsultationHtml(
   patient: Patient,
   form: PodiatryHistoryForm,
   clinic: ClinicInfo,
-  options?: { includeFootMap?: boolean; includeSignature?: boolean }
+  options?: { includeFootMap?: boolean; includeSignature?: boolean; formsConfig?: FormsCustomizationConfig }
 ): string {
   const includeFootMap = options?.includeFootMap !== false
   const includeSignature = options?.includeSignature !== false
+  const activeConfig = options?.formsConfig || DEFAULT_FORMS_CONFIG
   const age = calculateAge(patient.date_of_birth)
   const ageText = age !== null ? `${age} anos` : '-'
 
@@ -590,6 +640,8 @@ export function generateConsultationHtml(
           <div class="text-block">${escapeHtml(form.general_observations)}</div>
         </div>
       ` : ''}
+
+      ${renderCustomBlocksHtml(activeConfig.consultation.customBlocks, form.custom_data)}
 
       ${includeSignature ? renderSignature(clinic) : ''}
     </body>
@@ -747,6 +799,188 @@ export function generatePaymentReceiptHtml(
       </div>
 
       ${renderSignature(clinic)}
+    </body>
+    </html>
+  `
+}
+
+export function generateEvolutionReportHtml(
+  patient: Patient,
+  images: (PatientImage & { base64: string | null })[],
+  clinic: ClinicInfo,
+  options?: {
+    notes?: string
+    includeSignature?: boolean
+  }
+): string {
+  const patientFullName = `${patient.first_name} ${patient.last_name}`.trim()
+  const age = calculateAge(patient.date_of_birth)
+  const ageStr = age !== null ? `${age} anos` : '-'
+  const birthFormatted = formatDate(patient.date_of_birth)
+  const includeSignature = options?.includeSignature !== false
+
+  // Sort images chronologically (oldest first for timeline progression)
+  const sortedImages = [...images].sort((a, b) => {
+    const dateA = a.photo_date || a.created_at || ''
+    const dateB = b.photo_date || b.created_at || ''
+    return dateA.localeCompare(dateB)
+  })
+
+  const getTagBadge = (tag?: string | null) => {
+    const cleanTag = (tag || 'ANTES').toUpperCase()
+    switch (cleanTag) {
+      case 'DEPOIS':
+        return `<span style="background: #ecfdf5; color: #047857; border: 1px solid #6ee7b7; font-weight: 700; font-size: 8pt; padding: 2px 7px; border-radius: 4px; text-transform: uppercase;">Depois</span>`
+      case 'DURANTE':
+        return `<span style="background: #fef3c7; color: #b45309; border: 1px solid #fcd34d; font-weight: 700; font-size: 8pt; padding: 2px 7px; border-radius: 4px; text-transform: uppercase;">Durante</span>`
+      case 'RETORNO':
+        return `<span style="background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; font-weight: 700; font-size: 8pt; padding: 2px 7px; border-radius: 4px; text-transform: uppercase;">Retorno</span>`
+      case 'ANTES':
+      default:
+        return `<span style="background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; font-weight: 700; font-size: 8pt; padding: 2px 7px; border-radius: 4px; text-transform: uppercase;">Antes</span>`
+    }
+  }
+
+  return `
+    <!DOCTYPE html>
+    <html lang="pt-BR">
+    <head>
+      <meta charset="utf-8" />
+      <title>Relatório de Evolução Fotográfica - ${escapeHtml(patientFullName)}</title>
+      ${getBaseStyles()}
+      <style>
+        .photos-grid {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 14px;
+          margin-top: 10px;
+        }
+        .photo-card {
+          border: 1px solid #cbd5e1;
+          border-radius: 8px;
+          background: #ffffff;
+          padding: 8px;
+          page-break-inside: avoid;
+          display: flex;
+          flex-direction: column;
+        }
+        .photo-img-wrap {
+          width: 100%;
+          height: 180px;
+          background: #f1f5f9;
+          border-radius: 6px;
+          overflow: hidden;
+          margin-bottom: 8px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .photo-img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+        .photo-meta {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 4px;
+        }
+        .photo-date {
+          font-size: 8.5pt;
+          font-weight: 700;
+          color: #334155;
+        }
+        .photo-category {
+          font-size: 8pt;
+          color: #64748b;
+          font-weight: 500;
+        }
+        .photo-desc {
+          font-size: 8.5pt;
+          color: #1e293b;
+          line-height: 1.35;
+          margin-top: 4px;
+          font-style: italic;
+        }
+      </style>
+    </head>
+    <body>
+      ${renderHeader(clinic, 'Relatório de Evolução Fotográfica')}
+
+      <!-- Patient Header -->
+      <div class="section-card">
+        <div class="section-title">Dados do Paciente</div>
+        <div class="info-grid">
+          <div class="info-item">
+            <span class="info-label">Nome:</span>
+            <span class="info-value"><strong>${escapeHtml(patientFullName)}</strong></span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Nascimento:</span>
+            <span class="info-value">${birthFormatted} (${ageStr})</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Telefone:</span>
+            <span class="info-value">${escapeHtml(patient.phone || '-')}</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Total de Fotos:</span>
+            <span class="info-value">${sortedImages.length} registro(s) fotográfico(s)</span>
+          </div>
+        </div>
+      </div>
+
+      ${options?.notes ? `
+        <div class="section-card">
+          <div class="section-title">Observações Clínicas / Parecer Podológico</div>
+          <div class="text-block">${escapeHtml(options.notes)}</div>
+        </div>
+      ` : ''}
+
+      <!-- Photographic Evolution Grid -->
+      <div class="section-card">
+        <div class="section-title" style="display: flex; justify-content: space-between; align-items: center;">
+          <span>Evolução Cronológica do Tratamento</span>
+          <span style="font-size: 8pt; font-weight: normal; color: #64748b;">Ordem cronológica por data de atendimento</span>
+        </div>
+
+        ${sortedImages.length > 0 ? `
+          <div class="photos-grid">
+            ${sortedImages.map((img, idx) => {
+              const rawDate = img.photo_date || img.created_at
+              const dateDisplay = formatDate(rawDate)
+              return `
+                <div class="photo-card">
+                  <div class="photo-img-wrap">
+                    ${img.base64 ? `
+                      <img class="photo-img" src="${img.base64}" alt="Foto ${idx + 1}" />
+                    ` : `
+                      <span style="color: #94a3b8; font-size: 8.5pt;">Imagem não disponível</span>
+                    `}
+                  </div>
+                  <div class="photo-meta">
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                      ${getTagBadge(img.tag)}
+                      <span class="photo-date">${dateDisplay}</span>
+                    </div>
+                    ${img.category ? `<span class="photo-category">${escapeHtml(img.category)}</span>` : ''}
+                  </div>
+                  ${img.description ? `
+                    <div class="photo-desc">"${escapeHtml(img.description)}"</div>
+                  ` : ''}
+                </div>
+              `
+            }).join('')}
+          </div>
+        ` : `
+          <div style="text-align: center; padding: 20px; color: #64748b; font-size: 9pt;">
+            Nenhum registro fotográfico disponível para este paciente.
+          </div>
+        `}
+      </div>
+
+      ${includeSignature ? renderSignature(clinic) : ''}
     </body>
     </html>
   `

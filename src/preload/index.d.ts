@@ -19,7 +19,9 @@ import {
   CreateTransactionPayload,
   UpdateTransactionPayload,
   FinancialSummary,
-  GoogleSyncResult
+  GoogleSyncResult,
+  BirthdayPatient,
+  ClinicalNotifications
 } from '../shared/types'
 
 export interface IAPI {
@@ -42,6 +44,7 @@ export interface IAPI {
   createAppointment: (payload: CreateAppointmentPayload) => Promise<number>
   updateAppointment: (id: number, payload: UpdateAppointmentPayload) => Promise<void>
   deleteAppointment: (id: number) => Promise<void>
+  markPassedAppointmentsAsCompleted: (upToIsoString?: string) => Promise<number>
 
   isGoogleConnected: () => Promise<boolean>
   getGoogleStatus: () => Promise<{ isConnected: boolean; isConfigured: boolean; email: string | null }>
@@ -50,7 +53,10 @@ export interface IAPI {
   authenticateGoogle: () => Promise<boolean>
   pullFromGoogleCalendar: () => Promise<GoogleSyncResult>
   importGoogleCredentialsFile: () => Promise<{ success: boolean; clientId?: string; clientSecret?: string; error?: string } | null>
-  sendSingleAppointmentReminder: (appointmentId: number) => Promise<{ success: boolean; error?: string }>
+  sendSingleAppointmentReminder: (appointmentId: number, customTemplate?: string) => Promise<{ success: boolean; error?: string }>
+  sendCustomPatientMessage: (phone: string, message: string, appointmentId?: number) => Promise<{ success: boolean; error?: string }>
+  getTodayBirthdays: () => Promise<BirthdayPatient[]>
+  getClinicalNotifications: () => Promise<ClinicalNotifications>
   getSetting: (key: string) => Promise<string | null>
   setSetting: (key: string, value: string) => Promise<void>
   getWhatsappStatus: () => Promise<{ status: 'DISCONNECTED' | 'CONNECTING' | 'QR_READY' | 'CONNECTED'; qrDataUri: string }>
@@ -58,8 +64,9 @@ export interface IAPI {
   logoutWhatsapp: () => Promise<void>
   sendTestWhatsappMessage: (phone: string, message: string) => Promise<boolean>
   getPatientImages: (patientId: number) => Promise<PatientImage[]>
-  pickAndSavePatientImage: (patientId: number) => Promise<number | null>
+  pickAndSavePatientImage: (patientId: number, metadata?: { description?: string; tag?: string; category?: string; photo_date?: string }) => Promise<number | null>
   updatePatientImageDescription: (id: number, description: string) => Promise<void>
+  updatePatientImageMetadata: (id: number, data: { description?: string; tag?: string; category?: string; photo_date?: string }) => Promise<void>
   deletePatientImage: (id: number, fileName: string) => Promise<void>
   readPatientImageBase64: (fileName: string) => Promise<string | null>
   createBackup: () => Promise<string | null>
@@ -90,6 +97,13 @@ export interface IAPI {
   unlockSession: (password: string) => Promise<boolean>
   lockSession: () => Promise<boolean>
   isSessionLocked: () => Promise<boolean>
+  isSessionLockEnabled: () => Promise<boolean>
+  getSecurityStatus: () => Promise<{ isLockEnabled: boolean; hasPassword: boolean; inactivityMinutes: number }>
+  changeAdminPassword: (currentPassword: string, newPassword: string) => Promise<boolean>
+  removeSessionLock: (currentPassword?: string) => Promise<boolean>
+  enableSessionLock: (password: string) => Promise<boolean>
+  getInactivityTimeout: () => Promise<number>
+  setInactivityTimeout: (minutes: number) => Promise<boolean>
   activityPing: () => Promise<boolean>
   onSessionLocked: (callback: () => void) => () => void
   exportEncryptedBackup: (password: string) => Promise<boolean>

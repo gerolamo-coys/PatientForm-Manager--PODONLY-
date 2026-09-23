@@ -4,7 +4,7 @@ import path from 'path'
 import fs from 'fs'
 import { app, BrowserWindow } from 'electron'
 import { addDays, startOfDay, endOfDay, format } from 'date-fns'
-import { getDb, getSetting, setSetting } from './database'
+import { getDb, getSetting, setSetting, updateAppointmentReminderSent } from './database'
 
 let client: Client | null = null
 let currentStatus: 'DISCONNECTED' | 'CONNECTING' | 'QR_READY' | 'CONNECTED' = 'DISCONNECTED'
@@ -178,7 +178,41 @@ export async function sendTestWhatsappMessage(phone: string, message: string): P
   }
 }
 
-export async function sendSingleAppointmentReminder(appointmentId: number): Promise<{ success: boolean; error?: string }> {
+export interface ReminderTemplateContext {
+  fullName: string
+  firstName: string
+  date: string
+  time: string
+  serviceType: string
+  clinicName: string
+  clinicAddress: string
+  clinicPhone: string
+}
+
+export function formatReminderMessage(template: string, ctx: ReminderTemplateContext): string {
+  return template
+    .replace(/{nome}/g, ctx.fullName)
+    .replace(/{primeiro_nome}/g, ctx.firstName)
+    .replace(/{data}/g, ctx.date)
+    .replace(/{hora}/g, ctx.time)
+    .replace(/{procedimento}/g, ctx.serviceType)
+    .replace(/{clinica}/g, ctx.clinicName)
+    .replace(/{endereco}/g, ctx.clinicAddress)
+    .replace(/{telefone}/g, ctx.clinicPhone)
+}
+
+function getClinicContext(): { clinicName: string; clinicAddress: string; clinicPhone: string } {
+  return {
+    clinicName: getSetting('profile_clinic_name') || 'Clínica de Podologia',
+    clinicAddress: getSetting('profile_clinic_address') || '',
+    clinicPhone: getSetting('profile_clinic_phone') || ''
+  }
+}
+
+export async function sendSingleAppointmentReminder(
+  appointmentId: number,
+  customTemplate?: string
+): Promise<{ success: boolean; error?: string }> {
   if (currentStatus !== 'CONNECTED' || !client) {
     return { success: false, error: 'O WhatsApp não está conectado. Conecte nas configurações.' }
   }
@@ -189,7 +223,7 @@ export async function sendSingleAppointmentReminder(appointmentId: number): Prom
   }
 
   const appt = db.prepare(`
-    SELECT a.id, a.start_time, a.title, p.first_name, p.last_name, p.phone
+    SELECT a.id, a.start_time, a.title, a.service_type, p.first_name, p.last_name, p.phone
     FROM appointments a
     LEFT JOIN patients p ON a.patient_id = p.id
     WHERE a.id = ?
@@ -211,23 +245,60 @@ export async function sendSingleAppointmentReminder(appointmentId: number): Prom
   const apptDate = new Date(appt.start_time)
   const dateStr = format(apptDate, 'dd/MM/yyyy')
   const timeStr = format(apptDate, 'HH:mm')
-  const patientName = appt.first_name ? `${appt.first_name} ${appt.last_name || ''}`.trim() : appt.title
+  const firstName = (appt.first_name || appt.title || 'Paciente').trim()
+  const fullName = appt.first_name ? `${appt.first_name} ${appt.last_name || ''}`.trim() : (appt.title || 'Paciente')
+  const serviceType = appt.service_type || 'consulta de podologia'
 
-  const template = getSetting('whatsapp_template') || 
-    'Olá {nome}! Passando para lembrar da sua consulta de podologia agendada para {data}, às {hora}.'
+  const clinic = getClinicContext()
+  const template = customTemplate || getSetting('whatsapp_template') || 
+    'Olá {primeiro_nome}! Passando para lembrar da sua consulta de {procedimento} agendada para {data}, às {hora} na {clinica}.'
 
-  const message = template
-    .replace(/{nome}/g, patientName)
-    .replace(/{data}/g, dateStr)
-    .replace(/{hora}/g, timeStr)
+  const message = formatReminderMessage(template, {
+    fullName,
+    firstName,
+    date: dateStr,
+    time: timeStr,
+    serviceType,
+    clinicName: clinic.clinicName,
+    clinicAddress: clinic.clinicAddress,
+    clinicPhone: clinic.clinicPhone
+  })
 
   try {
     const chatId = cleanedPhone + '@c.us'
     await client.sendMessage(chatId, message)
+    updateAppointmentReminderSent(appointmentId)
     return { success: true }
   } catch (err: any) {
     console.error(`Failed to send reminder for appointment ${appointmentId}:`, err)
     return { success: false, error: err.message || 'Erro ao enviar WhatsApp.' }
+  }
+}
+
+export async function sendCustomPatientMessage(
+  phone: string,
+  message: string,
+  appointmentId?: number
+): Promise<{ success: boolean; error?: string }> {
+  if (currentStatus !== 'CONNECTED' || !client) {
+    return { success: false, error: 'O WhatsApp não está conectado. Conecte nas configurações.' }
+  }
+
+  const cleanedPhone = formatPhoneNumber(phone)
+  if (!cleanedPhone) {
+    return { success: false, error: 'Telefone inválido para envio.' }
+  }
+
+  try {
+    const chatId = cleanedPhone + '@c.us'
+    await client.sendMessage(chatId, message)
+    if (appointmentId) {
+      updateAppointmentReminderSent(appointmentId)
+    }
+    return { success: true }
+  } catch (err: any) {
+    console.error(`Failed to send custom WhatsApp message to ${cleanedPhone}:`, err)
+    return { success: false, error: err.message || 'Erro ao enviar mensagem pelo WhatsApp.' }
   }
 }
 
@@ -237,10 +308,15 @@ export async function sendTomorrowReminders() {
     return
   }
 
-  console.log('Running automatic WhatsApp reminders job for tomorrow...')
-  const tomorrow = addDays(new Date(), 1)
-  const tomorrowStart = startOfDay(tomorrow).toISOString()
-  const tomorrowEnd = endOfDay(tomorrow).toISOString()
+  const reminderDaysRaw = getSetting('whatsapp_reminder_days')
+  const offsetDays = reminderDaysRaw !== null && reminderDaysRaw !== undefined && reminderDaysRaw !== ''
+    ? parseInt(reminderDaysRaw, 10)
+    : 1
+
+  console.log(`Running automatic WhatsApp reminders job for offset +${offsetDays} day(s)...`)
+  const targetDate = addDays(new Date(), isNaN(offsetDays) ? 1 : offsetDays)
+  const targetStart = startOfDay(targetDate).toISOString()
+  const targetEnd = endOfDay(targetDate).toISOString()
 
   const db = getDb()
   if (!db) {
@@ -248,21 +324,22 @@ export async function sendTomorrowReminders() {
     return
   }
 
-  // Fetch tomorrow's appointments join with patients
+  // Fetch target day appointments joined with patients
   const appointments = db.prepare(`
-    SELECT a.id, a.start_time, p.first_name, p.last_name, p.phone
+    SELECT a.id, a.start_time, a.title, a.service_type, p.first_name, p.last_name, p.phone
     FROM appointments a
     JOIN patients p ON a.patient_id = p.id
     WHERE a.start_time >= ? AND a.start_time <= ?
-  `).all(tomorrowStart, tomorrowEnd) as any[]
+  `).all(targetStart, targetEnd) as any[]
 
   if (appointments.length === 0) {
-    console.log('No appointments found for tomorrow.')
+    console.log(`No appointments found for target date (${format(targetDate, 'dd/MM/yyyy')}).`)
     return
   }
 
+  const clinic = getClinicContext()
   const template = getSetting('whatsapp_template') || 
-    'Olá {nome}! Passando para lembrar da sua consulta de podologia amanhã, {data}, às {hora}.'
+    'Olá {primeiro_nome}! Passando para lembrar da sua consulta de {procedimento} agendada para {data}, às {hora} na {clinica}.'
 
   for (const appt of appointments) {
     if (!appt.phone) {
@@ -279,11 +356,20 @@ export async function sendTomorrowReminders() {
     const apptDate = new Date(appt.start_time)
     const dateStr = format(apptDate, 'dd/MM/yyyy')
     const timeStr = format(apptDate, 'HH:mm')
+    const firstName = (appt.first_name || appt.title || 'Paciente').trim()
+    const fullName = `${appt.first_name} ${appt.last_name || ''}`.trim()
+    const serviceType = appt.service_type || 'consulta de podologia'
 
-    const message = template
-      .replace(/{nome}/g, `${appt.first_name} ${appt.last_name}`)
-      .replace(/{data}/g, dateStr)
-      .replace(/{hora}/g, timeStr)
+    const message = formatReminderMessage(template, {
+      fullName,
+      firstName,
+      date: dateStr,
+      time: timeStr,
+      serviceType,
+      clinicName: clinic.clinicName,
+      clinicAddress: clinic.clinicAddress,
+      clinicPhone: clinic.clinicPhone
+    })
 
     try {
       const chatId = cleanedPhone + '@c.us'

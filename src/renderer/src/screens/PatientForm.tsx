@@ -5,8 +5,10 @@ import { Save, X, Activity, ClipboardList, AlertCircle, Map, User, FileText, Set
 import FootMapCanvas from '../components/FootMapCanvas'
 import FeetCanvasBuilderModal from '../components/FeetCanvasBuilderModal'
 import { calculateAge } from '../utils/ageHelper'
-import type { Patient } from '../../../shared/types'
+import type { Patient, FormsCustomizationConfig } from '../../../shared/types'
 import PrintDocumentModal from '../components/PrintDocumentModal'
+import DynamicCustomFieldsRenderer from '../components/DynamicCustomFieldsRenderer'
+import { DEFAULT_FORMS_CONFIG, loadFormsConfig, parseCustomData } from '../utils/formSchemaHelper'
 
 export interface HomeCareTemplate {
   id: string
@@ -56,9 +58,11 @@ export default function PatientForm() {
     procedures_performed: '',
     foot_specific_history: '',
     foot_map_image: '',
-    dermatological_pathologies: '[]'
+    dermatological_pathologies: '[]',
+    custom_data: '{}'
   })
 
+  const [formsConfig, setFormsConfig] = useState<FormsCustomizationConfig>(structuredClone(DEFAULT_FORMS_CONFIG))
   const [error, setError] = useState<string | null>(null)
   const [saveSuccess, setSaveSuccess] = useState(false)
   const [activeSection, setActiveSection] = useState('dados')
@@ -66,10 +70,33 @@ export default function PatientForm() {
   const [showPrintModal, setShowPrintModal] = useState(false)
   const [showFeetBuilderModal, setShowFeetBuilderModal] = useState(false)
 
+  const hasSavedDermPathologies = (() => {
+    try {
+      const parsed = JSON.parse(form.dermatological_pathologies || '[]')
+      return Array.isArray(parsed) && parsed.length > 0
+    } catch {
+      return false
+    }
+  })()
+
+  const showAvaliacaoSection =
+    formsConfig.consultation.showDermatologicalPathologies || hasSavedDermPathologies
+  const showHistoricoSection =
+    formsConfig.consultation.showFootSpecificHistory || Boolean(form.foot_specific_history)
+
+  const activeCustomConsultationBlocks = formsConfig.consultation.customBlocks.filter(
+    b => b.enabled || b.fields.some(f => parseCustomData(form.custom_data)[f.id] !== undefined)
+  )
+
   const sections = [
     { id: 'dados', title: 'Dados da Consulta', icon: User },
-    { id: 'avaliacao', title: 'Avaliação Podológica', icon: Activity },
-    { id: 'historico', title: 'Histórico', icon: FileText },
+    ...(showAvaliacaoSection ? [{ id: 'avaliacao', title: 'Avaliação Podológica', icon: Activity }] : []),
+    ...(showHistoricoSection ? [{ id: 'historico', title: 'Histórico', icon: FileText }] : []),
+    ...activeCustomConsultationBlocks.map(b => ({
+      id: `custom_${b.id}`,
+      title: b.title,
+      icon: Activity
+    })),
     { id: 'mapa', title: 'Mapa do Pé', icon: Map },
     { id: 'conclusao', title: 'Conclusão', icon: ClipboardList }
   ]
@@ -82,6 +109,12 @@ export default function PatientForm() {
     if (appContent) {
       appContent.scrollTop = 0
     }
+    loadFormsConfig().then(setFormsConfig)
+    const handleConfigUpdated = () => {
+      loadFormsConfig().then(setFormsConfig)
+    }
+    window.addEventListener('podonly-forms-config-updated', handleConfigUpdated)
+    return () => window.removeEventListener('podonly-forms-config-updated', handleConfigUpdated)
   }, [])
 
   useEffect(() => {
@@ -105,7 +138,7 @@ export default function PatientForm() {
     })
 
     return () => observer.disconnect()
-  }, [])
+  }, [sections.length])
 
   const [previousForm, setPreviousForm] = useState<any | null>(null)
   const [copySuccess, setCopySuccess] = useState(false)
@@ -141,7 +174,8 @@ export default function PatientForm() {
             procedures_performed: formData.procedures_performed || '',
             foot_specific_history: formData.foot_specific_history || '',
             foot_map_image: formData.foot_map_image || '',
-            dermatological_pathologies: formData.dermatological_pathologies || '[]'
+            dermatological_pathologies: formData.dermatological_pathologies || '[]',
+            custom_data: formData.custom_data || '{}'
           })
         }
       } catch (err: unknown) {
@@ -163,7 +197,8 @@ export default function PatientForm() {
       procedures_performed: previousForm.procedures_performed || '',
       foot_specific_history: previousForm.foot_specific_history || '',
       foot_map_image: previousForm.foot_map_image || '',
-      dermatological_pathologies: previousForm.dermatological_pathologies || '[]'
+      dermatological_pathologies: previousForm.dermatological_pathologies || '[]',
+      custom_data: previousForm.custom_data || '{}'
     }))
     setCopySuccess(true)
     setTimeout(() => setCopySuccess(false), 3500)
@@ -409,36 +444,57 @@ export default function PatientForm() {
   }
 
   return (
-    <div>
-      <div className="glass-card" style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', margin: 0 }}>
-            <ClipboardList color="var(--accent-color)" /> 
+    <div className="clinical-session-container">
+      <div className="clinical-focus-header">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', flexWrap: 'wrap' }}>
+          <h2 className="clinical-focus-title">
+            <ClipboardList size={26} color="var(--brand-dark)" /> 
             {isEditing ? 'Visualizar / Editar Consulta' : 'Nova Consulta'}
-            {patient && (
-              <span style={{ fontSize: '1.1rem', color: 'var(--text-secondary)', fontWeight: 'normal', marginLeft: '0.25rem' }}>
-                — {patient.first_name} {patient.last_name}
-                {patient.date_of_birth && calculateAge(patient.date_of_birth) !== null && (
-                  ` (${calculateAge(patient.date_of_birth)} ${calculateAge(patient.date_of_birth) === 1 ? 'ano' : 'anos'})`
-                )}
-              </span>
-            )}
           </h2>
+          {patient && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+              <span className="clinical-patient-name">
+                — {patient.first_name} {patient.last_name}
+              </span>
+              {patient.date_of_birth && calculateAge(patient.date_of_birth) !== null && (
+                <span style={{ fontSize: '1.05rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                  ({calculateAge(patient.date_of_birth)} {calculateAge(patient.date_of_birth) === 1 ? 'ano' : 'anos'})
+                </span>
+              )}
+              {form.visit_date && (
+                <span style={{ fontSize: '0.95rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                  • {new Date(form.visit_date + 'T12:00:00').toLocaleDateString()}
+                </span>
+              )}
+            </div>
+          )}
         </div>
-        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+
+        <div style={{ display: 'flex', gap: '0.65rem', alignItems: 'center', flexWrap: 'wrap' }}>
           {patient && (
             <button
               type="button"
-              className="btn btn-secondary"
+              className="btn-clinical-print"
               onClick={() => setShowPrintModal(true)}
-              style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--accent-color)', borderColor: 'var(--accent-color)' }}
               title="Imprimir ou salvar Ficha / Cuidados em PDF"
             >
               <Printer size={16} /> Imprimir / PDF
             </button>
           )}
-          <button type="button" className="btn btn-secondary" onClick={() => navigate(`/patient/${id}`)}>
+          <button 
+            type="button" 
+            className="btn-clinical-ghost" 
+            onClick={() => navigate(`/patient/${id}`)}
+          >
             <X size={18} /> Cancelar
+          </button>
+          <button
+            type="submit"
+            form="patient-clinical-form"
+            className="btn-clinical-save"
+            title="Salvar consulta diretamente"
+          >
+            <Save size={18} /> {isEditing ? 'Atualizar' : 'Salvar Consulta'}
           </button>
         </div>
       </div>
@@ -583,6 +639,7 @@ export default function PatientForm() {
 
         <div className="form-main-content">
           <form 
+            id="patient-clinical-form"
             onSubmit={handleSubmit} 
             onKeyDown={(e) => {
               if (e.key === 'Enter' && (e.target as HTMLElement).tagName.toLowerCase() !== 'textarea') {
@@ -608,43 +665,79 @@ export default function PatientForm() {
               </div>
             </section>
 
-            <section id="avaliacao" ref={el => { sectionRefs.current[1] = el; }} className="glass-card" style={{ scrollMarginTop: '6rem' }}>
-              <h3 className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Activity color="var(--success-color)" size={20} /> Avaliação Podológica
-              </h3>
-              <div className="grid-2">
-                <div className="form-group">
-                  <label className="form-label">Patologia Dermatológica Presente</label>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '0.5rem' }}>
-                    {[
-                      'Bromidrose', 'Desidrose', 'Exostose', 'Hiperidrose', 
-                      'Hiperqueratose', 'Micose Interdigital', 'Micose Plantar', 'Onicocriptose', 
-                      'Onicofose', 'Onicomicose', 'Psoríase', 'Ressecamento'
-                    ].map(item => {
-                      let isChecked = false
-                      try {
-                        isChecked = JSON.parse(form.dermatological_pathologies).includes(item)
-                      } catch {}
-                      return (
-                        <label key={item} style={{ fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                          <input type="checkbox" checked={isChecked} onChange={() => handleCheckboxArrayChange('dermatological_pathologies', item)} /> {item}
-                        </label>
-                      )
-                    })}
+            {showAvaliacaoSection && (
+              <section id="avaliacao" ref={el => { sectionRefs.current[1] = el; }} className="glass-card" style={{ scrollMarginTop: '6rem' }}>
+                <h3 className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Activity color="var(--success-color)" size={20} /> Avaliação Podológica
+                </h3>
+                <div className="grid-2">
+                  <div className="form-group">
+                    <label className="form-label">Patologia Dermatológica Presente</label>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '0.5rem' }}>
+                      {(() => {
+                        let savedDerm: string[] = []
+                        try {
+                          savedDerm = JSON.parse(form.dermatological_pathologies || '[]')
+                        } catch {}
+                        const mergedDerm = Array.from(
+                          new Set([
+                            ...formsConfig.consultation.dermatologicalPathologiesOptions,
+                            ...(Array.isArray(savedDerm) ? savedDerm : [])
+                          ])
+                        )
+                        return mergedDerm.map(item => {
+                          let isChecked = false
+                          try {
+                            isChecked = JSON.parse(form.dermatological_pathologies).includes(item)
+                          } catch {}
+                          return (
+                            <label key={item} style={{ fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                              <input type="checkbox" checked={isChecked} onChange={() => handleCheckboxArrayChange('dermatological_pathologies', item)} /> {item}
+                            </label>
+                          )
+                        })
+                      })()}
+                    </div>
                   </div>
                 </div>
-              </div>
-            </section>
+              </section>
+            )}
 
-            <section id="historico" ref={el => { sectionRefs.current[2] = el; }} className="glass-card" style={{ scrollMarginTop: '6rem' }}>
-              <h3 className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <FileText color="var(--success-color)" size={20} /> Histórico Específico dos Pés
-              </h3>
-              <div className="form-group" style={{ marginBottom: 0 }}>
-                <label className="form-label">Cirurgias prévias nos pés, neuropatia, úlceras, localização da dor, duração, tratamentos anteriores, etc.</label>
-                <textarea className="form-control" name="foot_specific_history" value={form.foot_specific_history} onChange={handleFormChange} style={{ minHeight: '150px' }} />
-              </div>
-            </section>
+            {showHistoricoSection && (
+              <section id="historico" ref={el => { sectionRefs.current[2] = el; }} className="glass-card" style={{ scrollMarginTop: '6rem' }}>
+                <h3 className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <FileText color="var(--success-color)" size={20} /> Histórico Específico dos Pés
+                </h3>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">Cirurgias prévias nos pés, neuropatia, úlceras, localização da dor, duração, tratamentos anteriores, etc.</label>
+                  <textarea className="form-control" name="foot_specific_history" value={form.foot_specific_history} onChange={handleFormChange} style={{ minHeight: '150px' }} />
+                </div>
+              </section>
+            )}
+
+            {activeCustomConsultationBlocks.map((block, bIdx) => (
+              <section
+                key={block.id}
+                id={`custom_${block.id}`}
+                ref={el => { sectionRefs.current[5 + bIdx] = el; }}
+                className="glass-card"
+                style={{ scrollMarginTop: '6rem' }}
+              >
+                <h3 className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Activity color="var(--success-color)" size={20} /> {block.title}
+                </h3>
+                <DynamicCustomFieldsRenderer
+                  fields={block.fields}
+                  customDataObj={parseCustomData(form.custom_data)}
+                  onChange={updatedObj =>
+                    setForm(prev => ({
+                      ...prev,
+                      custom_data: JSON.stringify(updatedObj)
+                    }))
+                  }
+                />
+              </section>
+            ))}
 
             <section id="mapa" ref={el => { sectionRefs.current[3] = el; }} className="glass-card" style={{ scrollMarginTop: '6rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.85rem', flexWrap: 'wrap', gap: '0.5rem' }}>
@@ -745,62 +838,71 @@ export default function PatientForm() {
                   style={{ minHeight: '90px' }}
                 />
               </div>
-              <div className="grid-2">
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-                    <label className="form-label" style={{ margin: 0 }}>Prescrição clínica / Home Care</label>
-                    <button
-                      type="button"
-                      onClick={() => setShowManageModal(true)}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        color: 'var(--accent-color)',
-                        fontSize: '0.78rem',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.3rem'
-                      }}
-                    >
-                      <Settings size={13} /> Gerenciar Modelos
-                    </button>
-                  </div>
 
-                  <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-                    {templates.map(tpl => (
-                      <button
-                        key={tpl.id}
-                        type="button"
-                        onClick={() => handleAppendTemplate(tpl.content)}
-                        style={{
-                          background: 'rgba(14, 145, 168, 0.08)',
-                          border: '1px solid rgba(14, 145, 168, 0.2)',
-                          color: 'var(--accent-color)',
-                          fontSize: '0.78rem',
-                          fontWeight: 500,
-                          padding: '0.25rem 0.6rem',
-                          borderRadius: '6px',
-                          cursor: 'pointer',
-                          transition: 'all 0.15s ease',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '0.3rem'
-                        }}
-                        title={`Inserir modelo: ${tpl.title}`}
-                      >
-                        + {tpl.title}
-                      </button>
-                    ))}
-                  </div>
-                  <textarea className="form-control" name="clinical_prescription" value={form.clinical_prescription} onChange={handleFormChange} style={{ minHeight: '100px' }} />
+              {((formsConfig.consultation.showClinicalPrescription || Boolean(form.clinical_prescription)) ||
+                (formsConfig.consultation.showGeneralObservations || Boolean(form.general_observations))) && (
+                <div className="grid-2">
+                  {(formsConfig.consultation.showClinicalPrescription || Boolean(form.clinical_prescription)) && (
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                        <label className="form-label" style={{ margin: 0 }}>Prescrição clínica / Home Care</label>
+                        <button
+                          type="button"
+                          onClick={() => setShowManageModal(true)}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: 'var(--accent-color)',
+                            fontSize: '0.78rem',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.3rem'
+                          }}
+                        >
+                          <Settings size={13} /> Gerenciar Modelos
+                        </button>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+                        {templates.map(tpl => (
+                          <button
+                            key={tpl.id}
+                            type="button"
+                            onClick={() => handleAppendTemplate(tpl.content)}
+                            style={{
+                              background: 'rgba(14, 145, 168, 0.08)',
+                              border: '1px solid rgba(14, 145, 168, 0.2)',
+                              color: 'var(--accent-color)',
+                              fontSize: '0.78rem',
+                              fontWeight: 500,
+                              padding: '0.25rem 0.6rem',
+                              borderRadius: '6px',
+                              cursor: 'pointer',
+                              transition: 'all 0.15s ease',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '0.3rem'
+                            }}
+                            title={`Inserir modelo: ${tpl.title}`}
+                          >
+                            + {tpl.title}
+                          </button>
+                        ))}
+                      </div>
+                      <textarea className="form-control" name="clinical_prescription" value={form.clinical_prescription} onChange={handleFormChange} style={{ minHeight: '100px' }} />
+                    </div>
+                  )}
+
+                  {(formsConfig.consultation.showGeneralObservations || Boolean(form.general_observations)) && (
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label className="form-label">Observações gerais</label>
+                      <textarea className="form-control" name="general_observations" value={form.general_observations} onChange={handleFormChange} style={{ minHeight: '100px' }} />
+                    </div>
+                  )}
                 </div>
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Observações gerais</label>
-                  <textarea className="form-control" name="general_observations" value={form.general_observations} onChange={handleFormChange} style={{ minHeight: '100px' }} />
-                </div>
-              </div>
+              )}
               
               <div className="form-actions" style={{ marginTop: '2.5rem', display: 'flex', justifyContent: 'flex-end', gap: '1rem', borderTop: '1px solid var(--surface-border)', paddingTop: '1.5rem' }}>
                 <button type="button" className="btn btn-secondary" onClick={() => navigate(`/patient/${id}`)}>
@@ -1092,6 +1194,7 @@ export default function PatientForm() {
             clinical_prescription: form.clinical_prescription,
             general_observations: form.general_observations,
             procedures_performed: form.procedures_performed,
+            custom_data: form.custom_data,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
           }}
